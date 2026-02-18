@@ -1,5 +1,5 @@
 import nodemailer from "nodemailer"
-import { errorHandler } from "../utils/error.js"
+import { errorHandler } from "../../utils/error.js"
 
 
 // Create email transporter

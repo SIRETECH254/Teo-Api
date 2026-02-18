@@ -57,7 +57,7 @@ import {
   sendOTPNotification,
   sendPasswordResetNotification,
   sendWelcomeNotification
-} from "../services/notificationService.js";
+} from "../services/internal/notificationService.js";
 ```
 
 ### Functions Overview

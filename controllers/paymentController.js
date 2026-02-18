@@ -2,7 +2,7 @@ import Payment from "../models/paymentModel.js"
 import Invoice from "../models/invoiceModel.js"
 import Order from "../models/orderModel.js"
 import Receipt from "../models/receiptModel.js"
-import { initiateMpesaForInvoice, initiatePaystackForInvoice, createPaymentRecord, applySuccessfulPayment } from "../services/paymentService.js"
+import { initiateMpesaForInvoice, initiatePaystackForInvoice, createPaymentRecord, applySuccessfulPayment } from "../services/internal/paymentService.js"
 import { parseCallback as parseDarajaCallback, queryStkPushStatus } from "../services/external/darajaService.js"
 import { parseWebhook as parsePaystackWebhook } from "../services/external/paystackService.js"
 
