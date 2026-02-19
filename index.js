@@ -40,34 +40,19 @@ const app = express()
 const PORT = process.env.PORT || 5000
 
 
-// CORS Configuration with fallback defaults
-const getAllowedOrigins = () => {
-  // Default fallback origins
-  const defaultOrigins = [
-    'http://localhost:5173',
-    'http://localhost:5174', 
-    'http://localhost:5000',
-    'https://teo-kicks.onrender.com'
-  ]
-  
-  if (!process.env.CORS_ORIGIN) {
-    console.warn('⚠️  CORS_ORIGIN not set in environment variables, using default origins:', defaultOrigins)
-    return defaultOrigins
-  }
-  
-  const origins = process.env.CORS_ORIGIN.split(',').map(origin => origin.trim()).filter(Boolean)
-  
-  if (origins.length === 0) {
-    console.warn('⚠️  CORS_ORIGIN is empty, using default origins:', defaultOrigins)
-    return defaultOrigins
-  }
-  
+// CORS Configuration with explicit origins
+const allowedOrigins = [
+  "http://localhost:5173",
+  "http://localhost:5174",
+  "http://localhost:5000",
+  "https://teokicks.onrender.com",
+  "https://teo-admin.onrender.com"
+];
 
-  return origins
+// Add CALLBACK_URL if it exists
+if (process.env.CALLBACK_URL) {
+  allowedOrigins.push(process.env.CALLBACK_URL);
 }
-
-
-const allowedOrigins = getAllowedOrigins()
 
 
 // CORS middleware configuration
@@ -80,7 +65,7 @@ app.use(cors({
       callback(null, true)
     } else {
       console.warn(`🚫 CORS blocked request from origin: ${origin}`)
-      callback(new Error('Not allowed by CORS'))
+      callback(new Error('Not allowed by CORS: Origin not in whitelist'))
     }
   },
   credentials: true,
