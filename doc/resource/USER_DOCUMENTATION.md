@@ -798,6 +798,8 @@ export const adminCreateCustomer = async (req, res, next) => {
 ```
 
 
+## 🧾 User Routes
+
 ### Base Path: `/api/users`
 
 ```typescript

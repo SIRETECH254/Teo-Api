@@ -550,6 +550,8 @@ productSchema.methods.generateSKUs = async function() {
 
 ## 🎮 Product Controller
 
+**File: `../controllers/productController.js`**
+
 ### Required Imports
 ```javascript
 import Product from "../models/productModel.js"
@@ -563,6 +565,9 @@ import {
     getOptimizedImageUrl 
 } from "../utils/cloudinary.js"
 ```
+
+
+## Product Controller
 
 ### Functions Overview
 
