@@ -232,8 +232,8 @@ import { errorHandler } from '../utils/error.js'
 **Purpose:** Retrieve the authenticated user's active shopping cart.  
 **Access:** Private (Authenticated User)  
 **Validation:** User must be authenticated.  
-**Process:** Finds or creates an active cart for the `req.user._id`, populates product details.  
-**Response:** The cart object with its items.
+**Process:** Finds or creates an active cart for the `req.user._id`, populates userId and product details.  
+**Response:** The cart object with its items and all ObjectId references populated.
 
 **Controller Implementation:**
 ```javascript
@@ -243,8 +243,12 @@ export const getCart = async (req, res, next) => {
         
         const cart = await Cart.findOrCreateByUser(userId)
         
-        // Populate product details
+        // Populate product details and userId
         await cart.populate([
+            {
+                path: 'userId',
+                select: 'name email phone'
+            },
             {
                 path: 'items.productId',
                 select: 'title images primaryImage slug skus variants'
@@ -626,7 +630,12 @@ export default router
   "success": true,
   "data": {
     "_id": "65e26b1c09b068c201383814",
-    "userId": "65e26b1c09b068c201383812",
+    "userId": {
+      "_id": "65e26b1c09b068c201383812",
+      "name": "John Doe",
+      "email": "john@example.com",
+      "phone": "254712345678"
+    },
     "items": [
       {
         "_id": "65e26b1c09b068c201383815",
@@ -683,7 +692,12 @@ export default router
   "message": "Item added to cart successfully",
   "data": {
     "_id": "65e26b1c09b068c201383814",
-    "userId": "65e26b1c09b068c201383812",
+    "userId": {
+      "_id": "65e26b1c09b068c201383812",
+      "name": "John Doe",
+      "email": "john@example.com",
+      "phone": "254712345678"
+    },
     "items": [
       {
         "_id": "65e26b1c09b068c201383815",
@@ -729,7 +743,12 @@ export default router
   "message": "Cart updated successfully",
   "data": {
     "_id": "65e26b1c09b068c201383814",
-    "userId": "65e26b1c09b068c201383812",
+    "userId": {
+      "_id": "65e26b1c09b068c201383812",
+      "name": "John Doe",
+      "email": "john@example.com",
+      "phone": "254712345678"
+    },
     "items": [
       {
         "_id": "65e26b1c09b068c201383815",
@@ -767,7 +786,12 @@ export default router
   "message": "Item removed from cart successfully",
   "data": {
     "_id": "65e26b1c09b068c201383814",
-    "userId": "65e26b1c09b068c201383812",
+    "userId": {
+      "_id": "65e26b1c09b068c201383812",
+      "name": "John Doe",
+      "email": "john@example.com",
+      "phone": "254712345678"
+    },
     "items": [],
     "totalAmount": 0,
     "totalItems": 0,
@@ -787,7 +811,12 @@ export default router
   "message": "Cart cleared successfully",
   "data": {
     "_id": "65e26b1c09b068c201383814",
-    "userId": "65e26b1c09b068c201383812",
+    "userId": {
+      "_id": "65e26b1c09b068c201383812",
+      "name": "John Doe",
+      "email": "john@example.com",
+      "phone": "254712345678"
+    },
     "items": [],
     "totalAmount": 0,
     "totalItems": 0,

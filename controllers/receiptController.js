@@ -47,6 +47,8 @@ export const getReceiptById = async (req, res, next) => {
   try {
     const { id } = req.params
     const receipt = await Receipt.findById(id)
+      .populate('orderId')
+      .populate('invoiceId')
     if (!receipt) return res.status(404).json({ success: false, message: 'Receipt not found' })
     return res.json({ success: true, data: { receipt } })
   } catch (err) {

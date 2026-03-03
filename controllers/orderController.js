@@ -183,6 +183,7 @@ export const getOrderById = async (req, res, next) => {
       .populate('receiptId')
       .populate('addressId')
       .populate({ path: 'customerId', select: 'name email phone' })
+      .populate({ path: 'createdBy', select: 'name email phone' })
       .populate({ path: 'items.productId', select: 'title primaryImage images basePrice' })
 
     if (!order) return res.status(404).json({ success: false, message: 'Order not found' })

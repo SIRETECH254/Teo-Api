@@ -12,7 +12,9 @@ export const getUserAddresses = async (req, res, next) => {
 
         const addresses = await Address.find({ 
             userId: req.user._id
-        }).sort({ isDefault: -1, createdAt: -1 })
+        })
+        .populate('userId', 'name email phone')
+        .sort({ isDefault: -1, createdAt: -1 })
 
         res.status(200).json({
             success: true,
@@ -46,6 +48,7 @@ export const getAddressById = async (req, res, next) => {
             _id: addressId,
             userId: req.user._id
         })
+        .populate('userId', 'name email phone')
 
         if (!address) {
 

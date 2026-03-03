@@ -381,8 +381,8 @@ export const deleteReview = async (req, res, next) => {
 **Purpose:** Retrieve a single review by its ID.  
 **Access:** Public  
 **Validation:** `reviewId` in params.  
-**Process:** Finds the review by ID and populates user and product details.  
-**Response:** A single review object.
+**Process:** Finds the review by ID and populates user, product, and orderId details.  
+**Response:** A single review object with all ObjectId references populated.
 
 **Controller Implementation:**
 ```javascript
@@ -393,6 +393,7 @@ export const getReviewById = async (req, res, next) => {
         const review = await Review.findById(reviewId)
         .populate('user', 'name email avatar')
         .populate('product', 'title images')
+        .populate('orderId')
 
         if (!review) {
             return res.status(404).json({

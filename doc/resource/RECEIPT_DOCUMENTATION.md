@@ -149,8 +149,8 @@ export const createReceipt = async (req, res, next) => {
 **Purpose:** Retrieves a single receipt by its ID.  
 **Access:** Private (Authenticated User / Admin)  
 **Validation:** `id` in params.  
-**Process:** Finds the receipt by ID.  
-**Response:** A single receipt object.
+**Process:** Finds the receipt by ID and populates orderId and invoiceId.  
+**Response:** A single receipt object with orderId and invoiceId populated.
 
 **Controller Implementation:**
 ```javascript
@@ -158,6 +158,8 @@ export const getReceiptById = async (req, res, next) => {
   try {
     const { id } = req.params
     const receipt = await Receipt.findById(id)
+      .populate('orderId')
+      .populate('invoiceId')
     if (!receipt) return res.status(404).json({ success: false, message: 'Receipt not found' })
     return res.json({ success: true, data: { receipt } })
   } catch (err) {
@@ -227,8 +229,17 @@ export default router
   "data": {
     "receipt": {
       "_id": "65e26b1c09b068c201383822",
-      "orderId": "65e26b1c09b068c201383820",
-      "invoiceId": "65e26b1c09b068c201383821",
+      "orderId": {
+        "_id": "65e26b1c09b068c201383820",
+        "status": "DELIVERED",
+        "paymentStatus": "PAID"
+      },
+      "invoiceId": {
+        "_id": "65e26b1c09b068c201383821",
+        "number": "INV-2026-123456",
+        "total": 1550,
+        "paymentStatus": "PAID"
+      },
       "receiptNumber": "RCP-2026-123456",
       "amountPaid": 1550,
       "paymentMethod": "cash",

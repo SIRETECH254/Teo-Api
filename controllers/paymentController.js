@@ -46,6 +46,7 @@ export const getPaymentById = async (req, res, next) => {
   try {
     const { id } = req.params
     const payment = await Payment.findById(id)
+      .populate('invoiceId')
     if (!payment) return res.status(404).json({ success: false, message: 'Payment not found' })
     return res.json({ success: true, data: { payment } })
   } catch (err) {

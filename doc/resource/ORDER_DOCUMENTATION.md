@@ -402,11 +402,11 @@ export const createOrder = async (req, res, next) => {
 ```
 
 #### `getOrderById()`
-**Purpose:** Retrieves a single order by its ID, with populated details such as invoice, receipt, address, customer, and product item data.  
+**Purpose:** Retrieves a single order by its ID, with populated details such as invoice, receipt, address, customer, createdBy, and product item data.  
 **Access:** Private (Authenticated User / Admin)  
 **Validation:** `id` in params.  
-**Process:** Finds the order by ID and populates related documents.  
-**Response:** A single order object with detailed information.
+**Process:** Finds the order by ID and populates related documents (invoiceId, receiptId, addressId, customerId, createdBy, items.productId).  
+**Response:** A single order object with detailed information and all ObjectId references populated.
 
 **Controller Implementation:**
 ```javascript
@@ -418,6 +418,7 @@ export const getOrderById = async (req, res, next) => {
       .populate('receiptId')
       .populate('addressId')
       .populate({ path: 'customerId', select: 'name email phone' })
+      .populate({ path: 'createdBy', select: 'name email phone' })
       .populate({ path: 'items.productId', select: 'title primaryImage images basePrice' })
 
     if (!order) return res.status(404).json({ success: false, message: 'Order not found' })
@@ -723,7 +724,12 @@ export default router
         "email": "john@example.com",
         "phone": "+254712345678"
       },
-      "createdBy": "65e26b1c09b068c201383812",
+      "createdBy": {
+        "_id": "65e26b1c09b068c201383812",
+        "name": "John Doe",
+        "email": "john@example.com",
+        "phone": "+254712345678"
+      },
       "location": "in_shop",
       "type": "pickup",
       "items": [

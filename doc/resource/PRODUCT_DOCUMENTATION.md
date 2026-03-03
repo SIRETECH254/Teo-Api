@@ -691,8 +691,8 @@ export const createProduct = async (req, res, next) => {
 **Purpose:** Retrieve all products with pagination, search, and filtering options by category, collection, status, etc.  
 **Access:** Public  
 **Validation:** Optional query parameters for `page`, `limit`, `search`, `category`, `collection`, `status`.  
-**Process:** Queries products based on filters and returns paginated results.  
-**Response:** Paginated list of product objects.
+**Process:** Queries products based on filters, populates related documents (categories, collections, createdBy, brand, tags, variants, skus.attributes.variantId), and post-processes to populate skus.attributes.optionId. Returns paginated results.  
+**Response:** Paginated list of product objects with all ObjectId references populated.
 
 **Controller Implementation:**
 ```javascript
@@ -728,11 +728,45 @@ export const getAllProducts = async (req, res) => {
         const options = {
             page: parseInt(page),
             limit: parseInt(limit),
-            populate: ['categories', 'collections', 'createdBy'],
+            populate: [
+                'categories', 
+                'collections', 
+                'createdBy',
+                'brand',
+                'tags',
+                'variants',
+                {
+                    path: 'skus.attributes.variantId',
+                    select: 'name options'
+                }
+            ],
             sort: { createdAt: -1 }
         }
 
         const products = await Product.paginate(query, options)
+
+        // Post-process to populate optionId in SKU attributes
+        if (products.docs && products.docs.length > 0) {
+            products.docs.forEach(product => {
+                if (product.skus && Array.isArray(product.skus)) {
+                    product.skus.forEach(sku => {
+                        if (sku.attributes && Array.isArray(sku.attributes)) {
+                            sku.attributes.forEach(attr => {
+                                // If variantId is populated, find the matching optionId in variant's options
+                                if (attr.variantId && attr.variantId.options && attr.optionId) {
+                                    const option = attr.variantId.options.find(
+                                        opt => opt._id && opt._id.toString() === attr.optionId.toString()
+                                    )
+                                    if (option) {
+                                        attr.optionId = option
+                                    }
+                                }
+                            })
+                        }
+                    })
+                }
+            })
+        }
 
         res.json({
             success: true,
@@ -760,11 +794,11 @@ export const getAllProducts = async (req, res) => {
 ```
 
 #### `getProductById()`
-**Purpose:** Retrieve a single product by its ID, with populated details including categories, collections, and variants.  
+**Purpose:** Retrieve a single product by its ID, with populated details including categories, collections, brand, tags, variants, and nested SKU attributes.  
 **Access:** Public  
 **Validation:** `id` in params.  
-**Process:** Finds the product by ID and populates related documents.  
-**Response:** A single product object with detailed information.
+**Process:** Finds the product by ID, populates related documents (categories, collections, createdBy, brand, tags, variants with options, skus.attributes.variantId), and post-processes to populate skus.attributes.optionId from variant options.  
+**Response:** A single product object with all ObjectId references populated, including deeply nested SKU attributes.
 
 **Controller Implementation:**
 ```javascript
@@ -774,17 +808,42 @@ export const getProductById = async (req, res) => {
             .populate('categories')
             .populate('collections')
             .populate('createdBy', 'name email')
+            .populate('brand')
+            .populate('tags')
             .populate({
                 path: 'variants',
                 populate: {
                     path: 'options'
                 }
             })
+            .populate({
+                path: 'skus.attributes.variantId',
+                select: 'name options'
+            })
 
         if (!product) {
             return res.status(404).json({
                 success: false,
                 message: "Product not found"
+            })
+        }
+
+        // Post-process to populate optionId in SKU attributes
+        if (product.skus && Array.isArray(product.skus)) {
+            product.skus.forEach(sku => {
+                if (sku.attributes && Array.isArray(sku.attributes)) {
+                    sku.attributes.forEach(attr => {
+                        // If variantId is populated, find the matching optionId in variant's options
+                        if (attr.variantId && attr.variantId.options && attr.optionId) {
+                            const option = attr.variantId.options.find(
+                                opt => opt._id && opt._id.toString() === attr.optionId.toString()
+                            )
+                            if (option) {
+                                attr.optionId = option
+                            }
+                        }
+                    })
+                }
             })
         }
 
@@ -1526,7 +1585,10 @@ export const getOptimizedImages = async (req, res, next) => {
       "slug": "classic-white-sneaker",
       "description": "A comfortable and stylish sneaker",
       "shortDescription": "Comfortable and stylish",
-      "brand": null,
+      "brand": {
+        "_id": "65e26b1c09b068c201383809",
+        "name": "Nike"
+      },
       "images": [
         {
           "url": "https://res.cloudinary.com/example/image1.jpg",
@@ -1535,15 +1597,59 @@ export const getOptimizedImages = async (req, res, next) => {
           "_id": "65e26b1c09b068c201383817"
         }
       ],
-      "categories": [],
-      "collections": [],
-      "tags": [],
+      "categories": [
+        {
+          "_id": "65e26b1c09b068c201383810",
+          "name": "Footwear"
+        }
+      ],
+      "collections": [
+        {
+          "_id": "65e26b1c09b068c201383811",
+          "name": "Best Sellers"
+        }
+      ],
+      "tags": [
+        {
+          "_id": "65e26b1c09b068c201383812",
+          "name": "Popular"
+        }
+      ],
+      "variants": [
+        {
+          "_id": "65e26b1c09b068c201383813",
+          "name": "Size",
+          "options": [
+            {
+              "_id": "65e26b1c09b068c201383814",
+              "value": "42"
+            }
+          ]
+        }
+      ],
       "basePrice": 1500,
       "comparePrice": 1800,
-      "variants": [],
       "skus": [
         {
-          "attributes": [],
+          "attributes": [
+            {
+              "variantId": {
+                "_id": "65e26b1c09b068c201383813",
+                "name": "Size",
+                "options": [
+                  {
+                    "_id": "65e26b1c09b068c201383814",
+                    "value": "42"
+                  }
+                ]
+              },
+              "optionId": {
+                "_id": "65e26b1c09b068c201383814",
+                "value": "42"
+              },
+              "_id": "65e26b1c09b068c201383819"
+            }
+          ],
           "price": 1500,
           "stock": 100,
           "skuCode": "CWS-DEFAULT",
@@ -1611,14 +1717,53 @@ export const getOptimizedImages = async (req, res, next) => {
         "name": "Footwear"
       }
     ],
-    "collections": [],
-    "tags": [],
+    "collections": [
+      {
+        "_id": "65e26b1c09b068c201383811",
+        "name": "Best Sellers"
+      }
+    ],
+    "tags": [
+      {
+        "_id": "65e26b1c09b068c201383812",
+        "name": "Popular"
+      }
+    ],
     "basePrice": 1500,
     "comparePrice": 1800,
-    "variants": [],
+    "variants": [
+      {
+        "_id": "65e26b1c09b068c201383813",
+        "name": "Size",
+        "options": [
+          {
+            "_id": "65e26b1c09b068c201383814",
+            "value": "42"
+          }
+        ]
+      }
+    ],
     "skus": [
       {
-        "attributes": [],
+        "attributes": [
+          {
+            "variantId": {
+              "_id": "65e26b1c09b068c201383813",
+              "name": "Size",
+              "options": [
+                {
+                  "_id": "65e26b1c09b068c201383814",
+                  "value": "42"
+                }
+              ]
+            },
+            "optionId": {
+              "_id": "65e26b1c09b068c201383814",
+              "value": "42"
+            },
+            "_id": "65e26b1c09b068c201383819"
+          }
+        ],
         "price": 1500,
         "stock": 100,
         "skuCode": "CWS-DEFAULT",

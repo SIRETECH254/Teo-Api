@@ -180,8 +180,8 @@ export const createInvoice = async (req, res, next) => {
 **Purpose:** Retrieves a single invoice by its ID.  
 **Access:** Private (Authenticated User)  
 **Validation:** `id` in params.  
-**Process:** Finds the invoice by ID.  
-**Response:** A single invoice object.
+**Process:** Finds the invoice by ID and populates orderId.  
+**Response:** A single invoice object with orderId populated.
 
 **Controller Implementation:**
 ```javascript
@@ -189,6 +189,7 @@ export const getInvoiceById = async (req, res, next) => {
   try {
     const { id } = req.params
     const invoice = await Invoice.findById(id)
+      .populate('orderId')
     if (!invoice) return res.status(404).json({ success: false, message: 'Invoice not found' })
     return res.json({ success: true, data: { invoice } })
   } catch (err) {
@@ -257,7 +258,15 @@ export default router
   "data": {
     "invoice": {
       "_id": "65e26b1c09b068c201383821",
-      "orderId": "65e26b1c09b068c201383820",
+      "orderId": {
+        "_id": "65e26b1c09b068c201383820",
+        "status": "PLACED",
+        "paymentStatus": "UNPAID",
+        "pricing": {
+          "subtotal": 1500,
+          "total": 1550
+        }
+      },
       "number": "INV-2026-123456",
       "lineItems": [
         { "label": "Items subtotal", "amount": 1500 },

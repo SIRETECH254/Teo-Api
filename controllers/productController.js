@@ -206,7 +206,18 @@ export const getAllProducts = async (req, res) => {
 
             limit: parseInt(limit),
 
-            populate: ['categories', 'collections', 'createdBy'],
+            populate: [
+                'categories', 
+                'collections', 
+                'createdBy',
+                'brand',
+                'tags',
+                'variants',
+                {
+                    path: 'skus.attributes.variantId',
+                    select: 'name options'
+                }
+            ],
 
             sort: { createdAt: -1 }
 
@@ -217,6 +228,29 @@ export const getAllProducts = async (req, res) => {
 
 
         const products = await Product.paginate(query, options)
+
+        // Post-process to populate optionId in SKU attributes
+        if (products.docs && products.docs.length > 0) {
+            products.docs.forEach(product => {
+                if (product.skus && Array.isArray(product.skus)) {
+                    product.skus.forEach(sku => {
+                        if (sku.attributes && Array.isArray(sku.attributes)) {
+                            sku.attributes.forEach(attr => {
+                                // If variantId is populated, find the matching optionId in variant's options
+                                if (attr.variantId && attr.variantId.options && attr.optionId) {
+                                    const option = attr.variantId.options.find(
+                                        opt => opt._id && opt._id.toString() === attr.optionId.toString()
+                                    )
+                                    if (option) {
+                                        attr.optionId = option
+                                    }
+                                }
+                            })
+                        }
+                    })
+                }
+            })
+        }
 
 
 
@@ -283,11 +317,20 @@ export const getProductById = async (req, res) => {
 
             .populate('createdBy', 'name email')
 
+            .populate('brand')
+
+            .populate('tags')
+
             .populate({
                 path: 'variants',
                 populate: {
                     path: 'options'
                 }
+            })
+
+            .populate({
+                path: 'skus.attributes.variantId',
+                select: 'name options'
             })
 
 
@@ -304,6 +347,25 @@ export const getProductById = async (req, res) => {
 
             })
 
+        }
+
+        // Post-process to populate optionId in SKU attributes
+        if (product.skus && Array.isArray(product.skus)) {
+            product.skus.forEach(sku => {
+                if (sku.attributes && Array.isArray(sku.attributes)) {
+                    sku.attributes.forEach(attr => {
+                        // If variantId is populated, find the matching optionId in variant's options
+                        if (attr.variantId && attr.variantId.options && attr.optionId) {
+                            const option = attr.variantId.options.find(
+                                opt => opt._id && opt._id.toString() === attr.optionId.toString()
+                            )
+                            if (option) {
+                                attr.optionId = option
+                            }
+                        }
+                    })
+                }
+            })
         }
 
 

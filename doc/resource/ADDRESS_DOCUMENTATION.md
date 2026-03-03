@@ -158,8 +158,8 @@ import { errorHandler } from "../utils/error.js"
 **Purpose:** Get all authenticated user's addresses.  
 **Access:** Private (Authenticated User)  
 **Validation:** User must be authenticated.  
-**Process:** Fetches all addresses associated with the `req.user._id`.  
-**Response:** An array of address objects.
+**Process:** Fetches all addresses associated with the `req.user._id` and populates userId.  
+**Response:** An array of address objects with userId populated.
 
 **Controller Implementation:**
 ```javascript
@@ -169,7 +169,9 @@ export const getUserAddresses = async (req, res, next) => {
 
         const addresses = await Address.find({ 
             userId: req.user._id
-        }).sort({ isDefault: -1, createdAt: -1 })
+        })
+        .populate('userId', 'name email phone')
+        .sort({ isDefault: -1, createdAt: -1 })
 
         res.status(200).json({
             success: true,
@@ -194,8 +196,8 @@ export const getUserAddresses = async (req, res, next) => {
 **Purpose:** Get a single address by its ID belonging to the authenticated user.  
 **Access:** Private (Authenticated User)  
 **Validation:** `addressId` in params, address must belong to `req.user._id`.  
-**Process:** Finds the address by ID and `userId`.  
-**Response:** A single address object.
+**Process:** Finds the address by ID and `userId`, populates userId details.  
+**Response:** A single address object with userId populated.
 
 **Controller Implementation:**
 ```javascript
@@ -209,6 +211,7 @@ export const getAddressById = async (req, res, next) => {
             _id: addressId,
             userId: req.user._id
         })
+        .populate('userId', 'name email phone')
 
         if (!address) {
 
@@ -696,7 +699,12 @@ export default router
     "addresses": [
       {
         "_id": "65e26b1c09b068c201383812",
-        "userId": "65e26b1c09b068c201383811",
+        "userId": {
+          "_id": "65e26b1c09b068c201383811",
+          "name": "John Doe",
+          "email": "john@example.com",
+          "phone": "254712345678"
+        },
         "name": "My Home Address",
         "coordinates": { "lat": -1.286389, "lng": 36.817223 },
         "regions": { "country": "Kenya", "locality": "Nairobi", "sublocality": "CBD", "administrative_area_level_1": "Nairobi County" },

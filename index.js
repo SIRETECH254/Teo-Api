@@ -125,7 +125,9 @@ app.use("/api/reviews", reviewRoute)
 app.use("/api/coupons", couponRoute)
 
 app.use("/api/store-config", storeConfigRoute)
+
 app.use("/api/packaging", packagingRoute)
+
 app.use("/api/stats", statsRoute)
 // app.use("/api/payments", paymentRoute)
 
