@@ -46,7 +46,8 @@ const allowedOrigins = [
   "http://localhost:5174",
   "http://localhost:5000",
   "https://teo-api.onrender.com",
-  "https://teo-admin.onrender.com"
+  "https://teo-admin.onrender.com",
+  "https://teo-client.onrender.com"
 ];
 
 // Add CALLBACK_URL if it exists
