@@ -76,15 +76,15 @@ export const createProduct = async (req, res, next) => {
             slug,
             description,
             shortDescription,
-            brand,
-            categories: categories ? JSON.parse(categories) : [],
-            collections: collections ? JSON.parse(collections) : [],
-            tags: tags ? JSON.parse(tags) : [],
+            brand: brand || undefined,
+            categories: categories || [],
+            collections: collections || [],
+            tags: tags || [],
             basePrice,
             comparePrice,
-            variants: variants ? JSON.parse(variants) : [],
+            variants: variants || [],
             images: processedImages,
-            features: features ? JSON.parse(features) : [],
+            features: features || [],
             trackInventory,
             weight,
             createdBy: req.user._id
@@ -429,16 +429,14 @@ export const updateProduct = async (req, res, next) => {
         }
 
         // Handle image retention/removal using keep arrays
-        const parseJsonArray = (raw) => {
-            try { const arr = JSON.parse(raw); return Array.isArray(arr) ? arr : [] } catch { return [] }
-        }
+        const parseJsonArray = (raw) => Array.isArray(raw) ? raw : []
 
         const keepPublicIds = new Set([
-            ...parseJsonArray(req.body.keepImagePublicIds || '[]'),
-            ...parseJsonArray(req.body.keepImages || '[]'), // backward compat
+            ...parseJsonArray(req.body.keepImagePublicIds),
+            ...parseJsonArray(req.body.keepImages), // backward compat
         ].filter(Boolean))
 
-        const keepDocIds = new Set(parseJsonArray(req.body.keepImageDocIds || '[]').map(String))
+        const keepDocIds = new Set(parseJsonArray(req.body.keepImageDocIds).map(String))
 
         if (keepPublicIds.size > 0 || keepDocIds.size > 0) {
             const currentImages = Array.isArray(product.images) ? product.images : []
@@ -500,14 +498,14 @@ export const updateProduct = async (req, res, next) => {
         if (title) product.title = title
         if (description !== undefined) product.description = description
         if (shortDescription !== undefined) product.shortDescription = shortDescription
-        if (brand !== undefined) product.brand = brand
-        if (categories !== undefined) product.categories = JSON.parse(categories)
-        if (collections !== undefined) product.collections = JSON.parse(collections)
-        if (tags !== undefined) product.tags = JSON.parse(tags)
+        if (brand !== undefined) product.brand = brand || undefined
+        if (categories !== undefined) product.categories = categories || []
+        if (collections !== undefined) product.collections = collections || []
+        if (tags !== undefined) product.tags = tags || []
         if (basePrice !== undefined) product.basePrice = basePrice
         if (comparePrice !== undefined) product.comparePrice = comparePrice
-        if (variants !== undefined) product.variants = JSON.parse(variants)
-        if (features !== undefined) product.features = JSON.parse(features)
+        if (variants !== undefined) product.variants = variants || []
+        if (features !== undefined) product.features = features || []
         if (metaTitle !== undefined) product.metaTitle = metaTitle
         if (metaDescription !== undefined) product.metaDescription = metaDescription
         if (trackInventory !== undefined) product.trackInventory = trackInventory
