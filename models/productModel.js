@@ -157,6 +157,19 @@ const productSchema = new mongoose.Schema({
         ref: 'Variant'
     }],
 
+    // Selected variant options (variantId + selected optionIds)
+    selectedVariantOptions: [{
+        variantId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Variant',
+            required: true
+        },
+        optionIds: [{
+            type: mongoose.Schema.Types.ObjectId,
+            required: true
+        }]
+    }],
+
     // SKUs for specific variant combinations
     skus: [skuSchema],
 
@@ -232,11 +245,14 @@ productSchema.index({ createdAt: -1 })
 
 
 
-// Instance method to generate SKUs based on variants
+// Instance method to generate SKUs based on selected variant options
 productSchema.methods.generateSKUs = async function() {
 
-    if (!this.variants || this.variants.length === 0) {
-
+    // If no selected variant options, create a single default SKU
+    if (!this.selectedVariantOptions || this.selectedVariantOptions.length === 0) {
+        // Clear variants array to keep data consistent (variants without selections are meaningless)
+        this.variants = []
+        
         // Create a single default SKU
         this.skus = [{
             attributes: [],
@@ -246,15 +262,48 @@ productSchema.methods.generateSKUs = async function() {
         }]
 
         return this.save()
-
     }
 
     // Get variant details with options
     const Variant = mongoose.model('Variant')
-    const variants = await Variant.find({ _id: { $in: this.variants } })
+    const variantIds = this.selectedVariantOptions.map(sel => sel.variantId)
+    const variants = await Variant.find({ _id: { $in: variantIds } })
 
-    // Generate all possible combinations
-    const combinations = this.generateCombinations(variants)
+    // Create a map of selected optionIds per variant
+    const selectedOptionsMap = new Map()
+    this.selectedVariantOptions.forEach(sel => {
+        selectedOptionsMap.set(sel.variantId.toString(), new Set(sel.optionIds.map(id => id.toString())))
+    })
+
+    // Filter variants to only include selected options
+    const variantsWithSelectedOptions = variants.map(variant => {
+        const selectedOptionIds = selectedOptionsMap.get(variant._id.toString())
+        if (!selectedOptionIds || selectedOptionIds.size === 0) {
+            return null
+        }
+        // Filter options to only selected ones
+        const filteredOptions = variant.options.filter(option => 
+            selectedOptionIds.has(option._id.toString())
+        )
+        return {
+            ...variant.toObject(),
+            options: filteredOptions
+        }
+    }).filter(v => v !== null && v.options.length > 0)
+
+    // If no valid variants with selected options, create default SKU
+    if (variantsWithSelectedOptions.length === 0) {
+        this.skus = [{
+            attributes: [],
+            price: this.basePrice,
+            stock: 0,
+            skuCode: this.generateSKUCode([])
+        }]
+        return this.save()
+    }
+
+    // Generate all possible combinations from selected options only
+    const combinations = this.generateCombinations(variantsWithSelectedOptions)
 
     // Helper to build a stable key from attributes for accurate matching
     const buildAttributesKey = (attributes) => {

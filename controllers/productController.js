@@ -1,4 +1,5 @@
 import Product from "../models/productModel.js"
+import Variant from "../models/variantModel.js"
 import { validateProduct, validateSKU, validateVariantAttachment } from "../utils/validation.js"
 import { errorHandler } from "../utils/error.js"
 import { generateUniqueSlug } from "../utils/slugGenerator.js"
@@ -11,15 +12,52 @@ import {
 
 
 
+// Helper function to populate optionIds from variant's options
+const populateOptionIds = (variant, optionIds) => {
+    if (!variant || !variant.options || !optionIds || !Array.isArray(optionIds)) {
+        return optionIds
+    }
+    return optionIds.map(optionId => {
+        const optionIdStr = optionId.toString ? optionId.toString() : String(optionId)
+        const option = variant.options.find(opt => opt._id && opt._id.toString() === optionIdStr)
+        return option || optionId
+    })
+}
+
+// Helper function to populate optionId from variant's options
+const populateOptionId = (variant, optionId) => {
+    if (!variant || !variant.options || !optionId) {
+        return optionId
+    }
+    const optionIdStr = optionId.toString ? optionId.toString() : String(optionId)
+    const option = variant.options.find(opt => opt._id && opt._id.toString() === optionIdStr)
+    return option || optionId
+}
 
 
 // Create a new product
 export const createProduct = async (req, res, next) => {
     try {
-        const { title, description, shortDescription, brand, categories, collections, tags, basePrice, comparePrice, variants, features, trackInventory, weight } = req.body
+        const { title, description, shortDescription, brand, categories, collections, tags, basePrice, comparePrice, variants, features, trackInventory, weight, selectedVariantOptions } = req.body
 
         if (!title) {
             return next(errorHandler(400, "Product title is required"))
+        }
+
+        // Helper function to parse JSON strings from form-data, or return the value if already parsed
+        const parseFormDataField = (value, defaultValue = []) => {
+            if (!value) return defaultValue
+            if (Array.isArray(value)) return value // Already an array
+            if (typeof value === 'object') return value // Already an object
+            if (typeof value === 'string') {
+                try {
+                    const parsed = JSON.parse(value)
+                    return parsed
+                } catch (e) {
+                    return defaultValue
+                }
+            }
+            return defaultValue
         }
 
         // Generate unique slug
@@ -77,25 +115,23 @@ export const createProduct = async (req, res, next) => {
             description,
             shortDescription,
             brand: brand || undefined,
-            categories: categories || [],
-            collections: collections || [],
-            tags: tags || [],
+            categories: parseFormDataField(categories, []),
+            collections: parseFormDataField(collections, []),
+            tags: parseFormDataField(tags, []),
             basePrice,
             comparePrice,
-            variants: variants || [],
+            variants: parseFormDataField(variants, []),
+            selectedVariantOptions: parseFormDataField(selectedVariantOptions, []),
             images: processedImages,
-            features: features || [],
+            features: parseFormDataField(features, []),
             trackInventory,
             weight,
             createdBy: req.user._id
         })
 
-        await product.save()
-
-        // Auto-generate SKUs if variants are attached
-        if (product.variants && product.variants.length > 0) {
-            await product.generateSKUs()
-        }
+        // Generate SKUs BEFORE first save to avoid null skuCode index error
+        // generateSKUs() will save the product, so we don't need to save separately
+        await product.generateSKUs()
 
         res.status(201).json({
             success: true,
@@ -212,10 +248,24 @@ export const getAllProducts = async (req, res) => {
                 'createdBy',
                 'brand',
                 'tags',
-                'variants',
+                {
+                    path: 'variants',
+                    populate: {
+                        path: 'options'
+                    }
+                },
+                {
+                    path: 'selectedVariantOptions.variantId',
+                    populate: {
+                        path: 'options'
+                    }
+                },
                 {
                     path: 'skus.attributes.variantId',
-                    select: 'name options'
+                    select: 'name options',
+                    populate: {
+                        path: 'options'
+                    }
                 }
             ],
 
@@ -229,26 +279,34 @@ export const getAllProducts = async (req, res) => {
 
         const products = await Product.paginate(query, options)
 
-        // Post-process to populate optionId in SKU attributes
-        if (products.docs && products.docs.length > 0) {
-            products.docs.forEach(product => {
-                if (product.skus && Array.isArray(product.skus)) {
-                    product.skus.forEach(sku => {
-                        if (sku.attributes && Array.isArray(sku.attributes)) {
+        // Convert to plain objects and populate optionIds and optionId for all products
+        if (products.docs) {
+            products.docs = products.docs.map(product => {
+                const productObj = product.toObject ? product.toObject() : product
+                
+                // Populate optionIds in selectedVariantOptions
+                if (productObj.selectedVariantOptions) {
+                    productObj.selectedVariantOptions.forEach(sel => {
+                        if (sel.variantId && sel.variantId.options) {
+                            sel.optionIds = populateOptionIds(sel.variantId, sel.optionIds)
+                        }
+                    })
+                }
+
+                // Populate optionId in SKU attributes
+                if (productObj.skus) {
+                    productObj.skus.forEach(sku => {
+                        if (sku.attributes) {
                             sku.attributes.forEach(attr => {
-                                // If variantId is populated, find the matching optionId in variant's options
-                                if (attr.variantId && attr.variantId.options && attr.optionId) {
-                                    const option = attr.variantId.options.find(
-                                        opt => opt._id && opt._id.toString() === attr.optionId.toString()
-                                    )
-                                    if (option) {
-                                        attr.optionId = option
-                                    }
+                                if (attr.variantId && attr.variantId.options) {
+                                    attr.optionId = populateOptionId(attr.variantId, attr.optionId)
                                 }
                             })
                         }
                     })
                 }
+                
+                return productObj
             })
         }
 
@@ -329,9 +387,20 @@ export const getProductById = async (req, res) => {
             })
 
             .populate({
-                path: 'skus.attributes.variantId',
-                select: 'name options'
+                path: 'selectedVariantOptions.variantId',
+                populate: {
+                    path: 'options'
+                }
             })
+
+            .populate({
+                path: 'skus.attributes.variantId',
+                select: 'name options',
+                populate: {
+                    path: 'options'
+                }
+            })
+            .lean()
 
 
 
@@ -349,19 +418,22 @@ export const getProductById = async (req, res) => {
 
         }
 
-        // Post-process to populate optionId in SKU attributes
-        if (product.skus && Array.isArray(product.skus)) {
+        // Populate optionIds in selectedVariantOptions
+        if (product.selectedVariantOptions) {
+            product.selectedVariantOptions.forEach(sel => {
+                if (sel.variantId && sel.variantId.options) {
+                    sel.optionIds = populateOptionIds(sel.variantId, sel.optionIds)
+                }
+            })
+        }
+
+        // Populate optionId in SKU attributes
+        if (product.skus) {
             product.skus.forEach(sku => {
-                if (sku.attributes && Array.isArray(sku.attributes)) {
+                if (sku.attributes) {
                     sku.attributes.forEach(attr => {
-                        // If variantId is populated, find the matching optionId in variant's options
-                        if (attr.variantId && attr.variantId.options && attr.optionId) {
-                            const option = attr.variantId.options.find(
-                                opt => opt._id && opt._id.toString() === attr.optionId.toString()
-                            )
-                            if (option) {
-                                attr.optionId = option
-                            }
+                        if (attr.variantId && attr.variantId.options) {
+                            attr.optionId = populateOptionId(attr.variantId, attr.optionId)
                         }
                     })
                 }
@@ -408,12 +480,28 @@ export const getProductById = async (req, res) => {
 export const updateProduct = async (req, res, next) => {
     try {
         const { productId } = req.params
-        const { title, description, shortDescription, brand, categories, collections, tags, basePrice, comparePrice, variants, features, metaTitle, metaDescription, trackInventory, weight, status } = req.body
+        const { title, description, shortDescription, brand, categories, collections, tags, basePrice, comparePrice, variants, features, metaTitle, metaDescription, trackInventory, weight, status, selectedVariantOptions } = req.body
 
         const product = await Product.findById(productId)
 
         if (!product) {
             return next(errorHandler(404, "Product not found"))
+        }
+
+        // Helper function to parse JSON strings from form-data, or return the value if already parsed
+        const parseFormDataField = (value, defaultValue = []) => {
+            if (!value) return defaultValue
+            if (Array.isArray(value)) return value // Already an array
+            if (typeof value === 'object') return value // Already an object
+            if (typeof value === 'string') {
+                try {
+                    const parsed = JSON.parse(value)
+                    return parsed
+                } catch (e) {
+                    return defaultValue
+                }
+            }
+            return defaultValue
         }
 
         // Generate new slug if title changed
@@ -499,13 +587,14 @@ export const updateProduct = async (req, res, next) => {
         if (description !== undefined) product.description = description
         if (shortDescription !== undefined) product.shortDescription = shortDescription
         if (brand !== undefined) product.brand = brand || undefined
-        if (categories !== undefined) product.categories = categories || []
-        if (collections !== undefined) product.collections = collections || []
-        if (tags !== undefined) product.tags = tags || []
+        if (categories !== undefined) product.categories = parseFormDataField(categories, [])
+        if (collections !== undefined) product.collections = parseFormDataField(collections, [])
+        if (tags !== undefined) product.tags = parseFormDataField(tags, [])
         if (basePrice !== undefined) product.basePrice = basePrice
         if (comparePrice !== undefined) product.comparePrice = comparePrice
-        if (variants !== undefined) product.variants = variants || []
-        if (features !== undefined) product.features = features || []
+        if (variants !== undefined) product.variants = parseFormDataField(variants, [])
+        if (features !== undefined) product.features = parseFormDataField(features, [])
+        if (selectedVariantOptions !== undefined) product.selectedVariantOptions = parseFormDataField(selectedVariantOptions, [])
         if (metaTitle !== undefined) product.metaTitle = metaTitle
         if (metaDescription !== undefined) product.metaDescription = metaDescription
         if (trackInventory !== undefined) product.trackInventory = trackInventory
@@ -522,6 +611,11 @@ export const updateProduct = async (req, res, next) => {
 
         await product.save()
 
+        // Regenerate SKUs if selectedVariantOptions was updated
+        if (selectedVariantOptions !== undefined) {
+            await product.generateSKUs()
+        }
+
         res.status(200).json({
             success: true,
             message: "Product updated successfully",
@@ -537,6 +631,9 @@ export const updateProduct = async (req, res, next) => {
                     tags: product.tags,
                     basePrice: product.basePrice,
                     comparePrice: product.comparePrice,
+                    variants: product.variants,
+                    selectedVariantOptions: product.selectedVariantOptions,
+                    skus: product.skus,
                     images: product.images,
                     status: product.status,
                     updatedAt: product.updatedAt
@@ -782,7 +879,7 @@ export const deleteSKU = async (req, res, next) => {
 export const attachVariant = async (req, res, next) => {
     try {
         const { productId } = req.params
-        const { variantId } = req.body
+        const { variantId, optionIds } = req.body
 
         // Validate request data
         const { error } = validateVariantAttachment(req.body)
@@ -790,18 +887,57 @@ export const attachVariant = async (req, res, next) => {
             return next(errorHandler(400, error.details[0].message))
         }
 
+        // Validate optionIds if provided
+        if (!optionIds || !Array.isArray(optionIds) || optionIds.length === 0) {
+            return next(errorHandler(400, "optionIds array is required and must not be empty"))
+        }
+
         const product = await Product.findById(productId)
         if (!product) {
             return next(errorHandler(404, "Product not found"))
         }
 
-        // Check if variant already attached
-        if (product.variants.includes(variantId)) {
-            return next(errorHandler(400, "Variant already attached to product"))
+        // Fetch variant to validate optionIds
+        const variant = await Variant.findById(variantId)
+        if (!variant) {
+            return next(errorHandler(404, "Variant not found"))
         }
 
-        // Add variant and regenerate SKUs
-        product.variants.push(variantId)
+        // Validate all optionIds belong to this variant
+        const variantOptionIds = new Set(variant.options.map(opt => opt._id.toString()))
+        const invalidOptionIds = optionIds.filter(optId => !variantOptionIds.has(optId.toString()))
+        
+        if (invalidOptionIds.length > 0) {
+            return next(errorHandler(400, `Invalid optionIds: ${invalidOptionIds.join(', ')}. These options do not belong to the specified variant.`))
+        }
+
+        // Initialize selectedVariantOptions if it doesn't exist
+        if (!product.selectedVariantOptions) {
+            product.selectedVariantOptions = []
+        }
+
+        // Check if variant selection already exists, update it; otherwise add new
+        const existingSelectionIndex = product.selectedVariantOptions.findIndex(
+            sel => sel.variantId.toString() === variantId.toString()
+        )
+
+        if (existingSelectionIndex >= 0) {
+            // Update existing selection
+            product.selectedVariantOptions[existingSelectionIndex].optionIds = optionIds
+        } else {
+            // Add new selection
+            product.selectedVariantOptions.push({
+                variantId,
+                optionIds
+            })
+        }
+
+        // Sync variants array (ensure variantId is in variants if not already)
+        if (!product.variants.some(id => id.toString() === variantId.toString())) {
+            product.variants.push(variantId)
+        }
+
+        // Regenerate SKUs based on selected options
         await product.generateSKUs()
 
         res.status(200).json({
@@ -811,6 +947,7 @@ export const attachVariant = async (req, res, next) => {
                 product: {
                     id: product._id,
                     variants: product.variants,
+                    selectedVariantOptions: product.selectedVariantOptions,
                     skus: product.skus
                 }
             }
@@ -841,25 +978,18 @@ export const detachVariant = async (req, res, next) => {
             return next(errorHandler(404, "Product not found"))
         }
 
-        // Remove variant
-        product.variants = product.variants.filter(id => id.toString() !== variantId)
-
-        // Remove SKUs that contain this variant
-        product.skus = product.skus.filter(sku =>
-            !sku.attributes.some(attr => attr.variantId.toString() === variantId)
-        )
-
-        // If no variants left, create default SKU
-        if (product.variants.length === 0) {
-            product.skus = [{
-                attributes: [],
-                price: product.basePrice,
-                stock: 0,
-                skuCode: `${product.slug.toUpperCase()}-DEFAULT`
-            }]
+        // Remove from selectedVariantOptions
+        if (product.selectedVariantOptions) {
+            product.selectedVariantOptions = product.selectedVariantOptions.filter(
+                sel => sel.variantId.toString() !== variantId.toString()
+            )
         }
 
-        await product.save()
+        // Remove variant from variants array
+        product.variants = product.variants.filter(id => id.toString() !== variantId.toString())
+
+        // Regenerate SKUs (will create default SKU if no selectedVariantOptions remain)
+        await product.generateSKUs()
 
         res.status(200).json({
             success: true,
@@ -868,6 +998,7 @@ export const detachVariant = async (req, res, next) => {
                 product: {
                     id: product._id,
                     variants: product.variants,
+                    selectedVariantOptions: product.selectedVariantOptions,
                     skus: product.skus
                 }
             }

@@ -17,6 +17,14 @@
 
 Product Management is central to the TEO KICKS API system, covering the full scope of product definition, inventory, and presentation. This includes creating detailed product listings, managing SKUs (Stock Keeping Units) for product variants, handling image uploads, setting pricing, and organizing products by categories, collections, and tags. It also supports SEO fields and inventory tracking.
 
+**Important:** Every product always has at least one SKU. When no variants are selected, a default SKU is automatically created. When variants are attached with selected options, SKUs are generated only for the selected option combinations. This ensures products are always ready for inventory management and prevents duplicate key errors.
+
+**Note on API Responses:** When retrieving products via `GET /api/products` or `GET /api/products/:id`, the following fields are automatically populated with full objects instead of just ObjectIds:
+- `selectedVariantOptions[].variantId` - Populated as full Variant object with all options
+- `selectedVariantOptions[].optionIds` - Populated as array of full Option objects
+- `skus[].attributes[].variantId` - Populated as full Variant object with all options
+- `skus[].attributes[].optionId` - Populated as full Option object
+
 ---
 
 ## 👤 Product Model
@@ -42,10 +50,14 @@ interface IProduct {
   basePrice: number;
   comparePrice?: number;
   variants: string[]; // Variant ObjectIds
+  selectedVariantOptions: Array<{
+    variantId: string | IVariant; // Variant ObjectId (populated as full Variant object with options in API responses)
+    optionIds: string[] | Array<{_id: string, value: string, isActive: boolean, sortOrder: number, createdAt: Date, updatedAt: Date}>; // Selected Option ObjectIds (populated as full Option objects in API responses)
+  }>; // Selected variant options used for SKU generation
   skus: Array<{
     attributes: Array<{
-      variantId: string; // Variant ObjectId
-      optionId: string; // Option ObjectId
+      variantId: string | IVariant; // Variant ObjectId (populated as full Variant object with options in API responses)
+      optionId: string | {_id: string, value: string, isActive: boolean, sortOrder: number, createdAt: Date, updatedAt: Date}; // Option ObjectId (populated as full Option object in API responses)
     }>;
     price: number;
     comparePrice?: number;
@@ -299,10 +311,13 @@ productSchema.index({ tags: 1 })
 productSchema.index({ createdAt: -1 })
 
 
-// Instance method to generate SKUs based on variants
+// Instance method to generate SKUs based on selected variant options
 productSchema.methods.generateSKUs = async function() {
 
-    if (!this.variants || this.variants.length === 0) {
+    // If no selected variant options, create a single default SKU
+    if (!this.selectedVariantOptions || this.selectedVariantOptions.length === 0) {
+        // Clear variants array to keep data consistent (variants without selections are meaningless)
+        this.variants = []
 
         // Create a single default SKU
         this.skus = [{
@@ -313,15 +328,48 @@ productSchema.methods.generateSKUs = async function() {
         }]
 
         return this.save()
-
     }
 
     // Get variant details with options
     const Variant = mongoose.model('Variant')
-    const variants = await Variant.find({ _id: { $in: this.variants } })
+    const variantIds = this.selectedVariantOptions.map(sel => sel.variantId)
+    const variants = await Variant.find({ _id: { $in: variantIds } })
 
-    // Generate all possible combinations
-    const combinations = this.generateCombinations(variants)
+    // Create a map of selected optionIds per variant
+    const selectedOptionsMap = new Map()
+    this.selectedVariantOptions.forEach(sel => {
+        selectedOptionsMap.set(sel.variantId.toString(), new Set(sel.optionIds.map(id => id.toString())))
+    })
+
+    // Filter variants to only include selected options
+    const variantsWithSelectedOptions = variants.map(variant => {
+        const selectedOptionIds = selectedOptionsMap.get(variant._id.toString())
+        if (!selectedOptionIds || selectedOptionIds.size === 0) {
+            return null
+        }
+        // Filter options to only selected ones
+        const filteredOptions = variant.options.filter(option => 
+            selectedOptionIds.has(option._id.toString())
+        )
+        return {
+            ...variant.toObject(),
+            options: filteredOptions
+        }
+    }).filter(v => v !== null && v.options.length > 0)
+
+    // If no valid variants with selected options, create default SKU
+    if (variantsWithSelectedOptions.length === 0) {
+        this.skus = [{
+            attributes: [],
+            price: this.basePrice,
+            stock: 0,
+            skuCode: this.generateSKUCode([])
+        }]
+        return this.save()
+    }
+
+    // Generate all possible combinations from selected options only
+    const combinations = this.generateCombinations(variantsWithSelectedOptions)
 
     // Helper to build a stable key from attributes for accurate matching
     const buildAttributesKey = (attributes) => {
@@ -527,6 +575,7 @@ productSchema.methods.generateSKUs = async function() {
     *   `basePrice`: Required, number, min 0.
     *   `comparePrice`: Optional, number, min 0.
     *   `variants`: Array of `ObjectId`, ref `Variant`.
+    *   `selectedVariantOptions`: Array of objects with `variantId` and `optionIds[]`. Used to specify which variant options should be included in SKU generation.
     *   `skus`: Array of `skuSchema`.
         *   `attributes`: Array of objects (`variantId`, `optionId`).
         *   `price`: Required, number, min 0.
@@ -572,20 +621,36 @@ import {
 ### Functions Overview
 
 #### `createProduct()`
-**Purpose:** Create a new product, handling image uploads and initial SKU generation based on variants.  
+**Purpose:** Create a new product, handling image uploads and initial SKU generation. Always generates at least one default SKU if no variant options are selected.  
 **Access:** Private (Admin)  
 **Validation:** `title` is required.  
-**Process:** Generates unique slug, uploads images to Cloudinary, creates product, and auto-generates SKUs if variants are attached.  
+**Process:** Accepts both `multipart/form-data` (with JSON stringified arrays/objects) and JSON body formats. Automatically parses JSON strings from FormData fields. Generates unique slug, uploads images to Cloudinary, creates product, and always generates SKUs (default SKU if no selectedVariantOptions, or SKUs from selected options).  
 **Response:** The newly created product object.
 
 **Controller Implementation:**
 ```javascript
 export const createProduct = async (req, res, next) => {
     try {
-        const { title, description, shortDescription, brand, categories, collections, tags, basePrice, comparePrice, variants, features, trackInventory, weight } = req.body
+        const { title, description, shortDescription, brand, categories, collections, tags, basePrice, comparePrice, variants, features, trackInventory, weight, selectedVariantOptions } = req.body
 
         if (!title) {
             return next(errorHandler(400, "Product title is required"))
+        }
+
+        // Helper function to parse JSON strings from form-data, or return the value if already parsed
+        const parseFormDataField = (value, defaultValue = []) => {
+            if (!value) return defaultValue
+            if (Array.isArray(value)) return value // Already an array
+            if (typeof value === 'object') return value // Already an object
+            if (typeof value === 'string') {
+                try {
+                    const parsed = JSON.parse(value)
+                    return parsed
+                } catch (e) {
+                    return defaultValue
+                }
+            }
+            return defaultValue
         }
 
         // Generate unique slug
@@ -599,28 +664,35 @@ export const createProduct = async (req, res, next) => {
         if (req.files && req.files.length > 0) {
             for (const file of req.files) {
                 try {
+                    // When using Cloudinary storage, the file is already uploaded
+                    // We can access the Cloudinary result from the file object
                     if (file.path) {
+                        // Traditional file upload - upload to Cloudinary
                         const uploadResult = await uploadToCloudinary(file.path, 'teo-kicks/products')
+                        
                         processedImages.push({
                             url: uploadResult.url,
                             public_id: uploadResult.public_id,
                             alt: file.originalname,
-                            isPrimary: processedImages.length === 0
+                            isPrimary: processedImages.length === 0 // First image is primary
                         })
                     } else if (file.secure_url) {
+                        // Cloudinary storage already uploaded the file
                         processedImages.push({
                             url: file.secure_url,
                             public_id: file.public_id,
                             alt: file.originalname,
-                            isPrimary: processedImages.length === 0
+                            isPrimary: processedImages.length === 0 // First image is primary
                         })
                     } else {
+                        // Fallback: try to upload using file buffer
                         const uploadResult = await uploadToCloudinary(file.buffer, 'teo-kicks/products')
+                        
                         processedImages.push({
                             url: uploadResult.url,
                             public_id: uploadResult.public_id,
                             alt: file.originalname,
-                            isPrimary: processedImages.length === 0
+                            isPrimary: processedImages.length === 0 // First image is primary
                         })
                     }
                 } catch (uploadError) {
@@ -635,15 +707,16 @@ export const createProduct = async (req, res, next) => {
             slug,
             description,
             shortDescription,
-            brand,
-            categories: categories ? JSON.parse(categories) : [],
-            collections: collections ? JSON.parse(collections) : [],
-            tags: tags ? JSON.parse(tags) : [],
+            brand: brand || undefined,
+            categories: parseFormDataField(categories, []),
+            collections: parseFormDataField(collections, []),
+            tags: parseFormDataField(tags, []),
             basePrice,
             comparePrice,
-            variants: variants ? JSON.parse(variants) : [],
+            variants: parseFormDataField(variants, []),
+            selectedVariantOptions: parseFormDataField(selectedVariantOptions, []),
             images: processedImages,
-            features: features ? JSON.parse(features) : [],
+            features: parseFormDataField(features, []),
             trackInventory,
             weight,
             createdBy: req.user._id
@@ -651,10 +724,8 @@ export const createProduct = async (req, res, next) => {
 
         await product.save()
 
-        // Auto-generate SKUs if variants are attached
-        if (product.variants && product.variants.length > 0) {
+        // Always generate SKUs (will create default SKU if no selectedVariantOptions)
             await product.generateSKUs()
-        }
 
         res.status(201).json({
             success: true,
@@ -682,6 +753,8 @@ export const createProduct = async (req, res, next) => {
 
     } catch (error) {
         console.error("Create product error:", error)
+        console.error("Create product error stack:", error.stack)
+        console.error("Create product error message:", error.message)
         next(errorHandler(500, "Server error while creating product"))
     }
 }
@@ -691,11 +764,33 @@ export const createProduct = async (req, res, next) => {
 **Purpose:** Retrieve all products with pagination, search, and filtering options by category, collection, status, etc.  
 **Access:** Public  
 **Validation:** Optional query parameters for `page`, `limit`, `search`, `category`, `collection`, `status`.  
-**Process:** Queries products based on filters, populates related documents (categories, collections, createdBy, brand, tags, variants, skus.attributes.variantId), and post-processes to populate skus.attributes.optionId. Returns paginated results.  
-**Response:** Paginated list of product objects with all ObjectId references populated.
+**Process:** Queries products based on filters, populates related documents (categories, collections, createdBy, brand, tags, variants with options, selectedVariantOptions.variantId with options, skus.attributes.variantId with options), converts to plain objects, and post-processes to populate `selectedVariantOptions.optionIds` and `skus.attributes.optionId` from variant options. Returns paginated results.  
+**Response:** Paginated list of product objects with all ObjectId references populated, including `selectedVariantOptions.optionIds` and `skus.attributes.optionId` as full option objects.
 
 **Controller Implementation:**
 ```javascript
+// Helper function to populate optionIds from variant's options
+const populateOptionIds = (variant, optionIds) => {
+    if (!variant || !variant.options || !optionIds || !Array.isArray(optionIds)) {
+        return optionIds
+    }
+    return optionIds.map(optionId => {
+        const optionIdStr = optionId.toString ? optionId.toString() : String(optionId)
+        const option = variant.options.find(opt => opt._id && opt._id.toString() === optionIdStr)
+        return option || optionId
+    })
+}
+
+// Helper function to populate optionId from variant's options
+const populateOptionId = (variant, optionId) => {
+    if (!variant || !variant.options || !optionId) {
+        return optionId
+    }
+    const optionIdStr = optionId.toString ? optionId.toString() : String(optionId)
+    const option = variant.options.find(opt => opt._id && opt._id.toString() === optionIdStr)
+    return option || optionId
+}
+
 export const getAllProducts = async (req, res) => {
     try {
         const { page = 1, limit = 10, search, category, collection, status } = req.query
@@ -734,10 +829,24 @@ export const getAllProducts = async (req, res) => {
                 'createdBy',
                 'brand',
                 'tags',
-                'variants',
+                {
+                    path: 'variants',
+                    populate: {
+                        path: 'options'
+                    }
+                },
+                {
+                    path: 'selectedVariantOptions.variantId',
+                    populate: {
+                        path: 'options'
+                    }
+                },
                 {
                     path: 'skus.attributes.variantId',
-                    select: 'name options'
+                    select: 'name options',
+                    populate: {
+                        path: 'options'
+                    }
                 }
             ],
             sort: { createdAt: -1 }
@@ -745,26 +854,34 @@ export const getAllProducts = async (req, res) => {
 
         const products = await Product.paginate(query, options)
 
-        // Post-process to populate optionId in SKU attributes
-        if (products.docs && products.docs.length > 0) {
-            products.docs.forEach(product => {
-                if (product.skus && Array.isArray(product.skus)) {
-                    product.skus.forEach(sku => {
-                        if (sku.attributes && Array.isArray(sku.attributes)) {
+        // Convert to plain objects and populate optionIds and optionId for all products
+        if (products.docs) {
+            products.docs = products.docs.map(product => {
+                const productObj = product.toObject ? product.toObject() : product
+                
+                // Populate optionIds in selectedVariantOptions
+                if (productObj.selectedVariantOptions) {
+                    productObj.selectedVariantOptions.forEach(sel => {
+                        if (sel.variantId && sel.variantId.options) {
+                            sel.optionIds = populateOptionIds(sel.variantId, sel.optionIds)
+                        }
+                    })
+                }
+
+                // Populate optionId in SKU attributes
+                if (productObj.skus) {
+                    productObj.skus.forEach(sku => {
+                        if (sku.attributes) {
                             sku.attributes.forEach(attr => {
-                                // If variantId is populated, find the matching optionId in variant's options
-                                if (attr.variantId && attr.variantId.options && attr.optionId) {
-                                    const option = attr.variantId.options.find(
-                                        opt => opt._id && opt._id.toString() === attr.optionId.toString()
-                                    )
-                                    if (option) {
-                                        attr.optionId = option
-                                    }
+                                if (attr.variantId && attr.variantId.options) {
+                                    attr.optionId = populateOptionId(attr.variantId, attr.optionId)
                                 }
                             })
                         }
                     })
                 }
+                
+                return productObj
             })
         }
 
@@ -794,14 +911,36 @@ export const getAllProducts = async (req, res) => {
 ```
 
 #### `getProductById()`
-**Purpose:** Retrieve a single product by its ID, with populated details including categories, collections, brand, tags, variants, and nested SKU attributes.  
+**Purpose:** Retrieve a single product by its ID, with populated details including categories, collections, brand, tags, variants, selectedVariantOptions, and nested SKU attributes.  
 **Access:** Public  
 **Validation:** `id` in params.  
-**Process:** Finds the product by ID, populates related documents (categories, collections, createdBy, brand, tags, variants with options, skus.attributes.variantId), and post-processes to populate skus.attributes.optionId from variant options.  
-**Response:** A single product object with all ObjectId references populated, including deeply nested SKU attributes.
+**Process:** Finds the product by ID using `.lean()` to return a plain object, populates related documents (categories, collections, createdBy, brand, tags, variants with options, selectedVariantOptions.variantId with options, skus.attributes.variantId with options), and post-processes to populate `selectedVariantOptions.optionIds` and `skus.attributes.optionId` from variant options. Returns the full product object with all ObjectId references populated.  
+**Response:** A single product object with all ObjectId references populated, including `selectedVariantOptions.optionIds` and `skus.attributes.optionId` as full option objects.
 
 **Controller Implementation:**
 ```javascript
+// Helper function to populate optionIds from variant's options
+const populateOptionIds = (variant, optionIds) => {
+    if (!variant || !variant.options || !optionIds || !Array.isArray(optionIds)) {
+        return optionIds
+    }
+    return optionIds.map(optionId => {
+        const optionIdStr = optionId.toString ? optionId.toString() : String(optionId)
+        const option = variant.options.find(opt => opt._id && opt._id.toString() === optionIdStr)
+        return option || optionId
+    })
+}
+
+// Helper function to populate optionId from variant's options
+const populateOptionId = (variant, optionId) => {
+    if (!variant || !variant.options || !optionId) {
+        return optionId
+    }
+    const optionIdStr = optionId.toString ? optionId.toString() : String(optionId)
+    const option = variant.options.find(opt => opt._id && opt._id.toString() === optionIdStr)
+    return option || optionId
+}
+
 export const getProductById = async (req, res) => {
     try {
         const product = await Product.findById(req.params.id)
@@ -817,9 +956,19 @@ export const getProductById = async (req, res) => {
                 }
             })
             .populate({
-                path: 'skus.attributes.variantId',
-                select: 'name options'
+                path: 'selectedVariantOptions.variantId',
+                populate: {
+                    path: 'options'
+                }
             })
+            .populate({
+                path: 'skus.attributes.variantId',
+                select: 'name options',
+                populate: {
+                    path: 'options'
+                }
+            })
+            .lean()
 
         if (!product) {
             return res.status(404).json({
@@ -828,19 +977,22 @@ export const getProductById = async (req, res) => {
             })
         }
 
-        // Post-process to populate optionId in SKU attributes
-        if (product.skus && Array.isArray(product.skus)) {
+        // Populate optionIds in selectedVariantOptions
+        if (product.selectedVariantOptions) {
+            product.selectedVariantOptions.forEach(sel => {
+                if (sel.variantId && sel.variantId.options) {
+                    sel.optionIds = populateOptionIds(sel.variantId, sel.optionIds)
+                }
+            })
+        }
+
+        // Populate optionId in SKU attributes
+        if (product.skus) {
             product.skus.forEach(sku => {
-                if (sku.attributes && Array.isArray(sku.attributes)) {
+                if (sku.attributes) {
                     sku.attributes.forEach(attr => {
-                        // If variantId is populated, find the matching optionId in variant's options
-                        if (attr.variantId && attr.variantId.options && attr.optionId) {
-                            const option = attr.variantId.options.find(
-                                opt => opt._id && opt._id.toString() === attr.optionId.toString()
-                            )
-                            if (option) {
-                                attr.optionId = option
-                            }
+                        if (attr.variantId && attr.variantId.options) {
+                            attr.optionId = populateOptionId(attr.variantId, attr.optionId)
                         }
                     })
                 }
@@ -865,10 +1017,10 @@ export const getProductById = async (req, res) => {
 ```
 
 #### `updateProduct()`
-**Purpose:** Update an existing product, including managing image deletions (via `keepImagePublicIds` or `keepImageDocIds`) and uploading new images.  
+**Purpose:** Update an existing product, including managing image deletions (via `keepImagePublicIds` or `keepImageDocIds`), uploading new images, and updating selected variant options.  
 **Access:** Private (Admin)  
 **Validation:** `productId` in params.  
-**Process:** Updates product fields, handles image retention/deletion, uploads new images, and ensures one primary image.  
+**Process:** Accepts both `multipart/form-data` (with JSON stringified arrays/objects) and JSON body formats. Automatically parses JSON strings from FormData fields. Updates product fields, handles image retention/deletion, uploads new images, ensures one primary image, and regenerates SKUs if `selectedVariantOptions` is updated.  
 **Response:** The updated product object.
 
 **Controller Implementation:**
@@ -876,12 +1028,28 @@ export const getProductById = async (req, res) => {
 export const updateProduct = async (req, res, next) => {
     try {
         const { productId } = req.params
-        const { title, description, shortDescription, brand, categories, collections, tags, basePrice, comparePrice, variants, features, metaTitle, metaDescription, trackInventory, weight, status } = req.body
+        const { title, description, shortDescription, brand, categories, collections, tags, basePrice, comparePrice, variants, features, metaTitle, metaDescription, trackInventory, weight, status, selectedVariantOptions } = req.body
 
         const product = await Product.findById(productId)
 
         if (!product) {
             return next(errorHandler(404, "Product not found"))
+        }
+
+        // Helper function to parse JSON strings from form-data, or return the value if already parsed
+        const parseFormDataField = (value, defaultValue = []) => {
+            if (!value) return defaultValue
+            if (Array.isArray(value)) return value // Already an array
+            if (typeof value === 'object') return value // Already an object
+            if (typeof value === 'string') {
+                try {
+                    const parsed = JSON.parse(value)
+                    return parsed
+                } catch (e) {
+                    return defaultValue
+                }
+            }
+            return defaultValue
         }
 
         // Generate new slug if title changed
@@ -897,16 +1065,14 @@ export const updateProduct = async (req, res, next) => {
         }
 
         // Handle image retention/removal using keep arrays
-        const parseJsonArray = (raw) => {
-            try { const arr = JSON.parse(raw); return Array.isArray(arr) ? arr : [] } catch { return [] }
-        }
+        const parseJsonArray = (raw) => Array.isArray(raw) ? raw : []
 
         const keepPublicIds = new Set([
-            ...parseJsonArray(req.body.keepImagePublicIds || '[]'),
-            ...parseJsonArray(req.body.keepImages || '[]'),
+            ...parseJsonArray(req.body.keepImagePublicIds),
+            ...parseJsonArray(req.body.keepImages), // backward compat
         ].filter(Boolean))
 
-        const keepDocIds = new Set(parseJsonArray(req.body.keepImageDocIds || '[]').map(String))
+        const keepDocIds = new Set(parseJsonArray(req.body.keepImageDocIds).map(String))
 
         if (keepPublicIds.size > 0 || keepDocIds.size > 0) {
             const currentImages = Array.isArray(product.images) ? product.images : []
@@ -925,28 +1091,35 @@ export const updateProduct = async (req, res, next) => {
         if (req.files && req.files.length > 0) {
             for (const file of req.files) {
                 try {
+                    // When using Cloudinary storage, the file is already uploaded
+                    // We can access the Cloudinary result from the file object
                     if (file.path) {
+                        // Traditional file upload - upload to Cloudinary
                         const uploadResult = await uploadToCloudinary(file.path, 'teo-kicks/products')
-                        processedImages.push({
+                        
+                        product.images.push({
                             url: uploadResult.url,
                             public_id: uploadResult.public_id,
                             alt: file.originalname,
-                            isPrimary: product.images.length === 0
+                            isPrimary: product.images.length === 0 // Primary if no images exist
                         })
                     } else if (file.secure_url) {
-                        processedImages.push({
+                        // Cloudinary storage already uploaded the file
+                        product.images.push({
                             url: file.secure_url,
                             public_id: file.public_id,
                             alt: file.originalname,
-                            isPrimary: product.images.length === 0
+                            isPrimary: product.images.length === 0 // Primary if no images exist
                         })
                     } else {
+                        // Fallback: try to upload using file buffer
                         const uploadResult = await uploadToCloudinary(file.buffer, 'teo-kicks/products')
-                        processedImages.push({
+                        
+                        product.images.push({
                             url: uploadResult.url,
                             public_id: uploadResult.public_id,
                             alt: file.originalname,
-                            isPrimary: product.images.length === 0
+                            isPrimary: product.images.length === 0 // Primary if no images exist
                         })
                     }
                 } catch (uploadError) {
@@ -960,19 +1133,20 @@ export const updateProduct = async (req, res, next) => {
         if (title) product.title = title
         if (description !== undefined) product.description = description
         if (shortDescription !== undefined) product.shortDescription = shortDescription
-        if (brand !== undefined) product.brand = brand
-        if (categories !== undefined) product.categories = JSON.parse(categories)
-        if (collections !== undefined) product.collections = JSON.parse(collections)
-        if (tags !== undefined) product.tags = JSON.parse(tags)
+        if (brand !== undefined) product.brand = brand || undefined
+        if (categories !== undefined) product.categories = parseFormDataField(categories, [])
+        if (collections !== undefined) product.collections = parseFormDataField(collections, [])
+        if (tags !== undefined) product.tags = parseFormDataField(tags, [])
         if (basePrice !== undefined) product.basePrice = basePrice
         if (comparePrice !== undefined) product.comparePrice = comparePrice
-        if (variants !== undefined) product.variants = JSON.parse(variants)
-        if (features !== undefined) product.features = JSON.parse(features)
+        if (variants !== undefined) product.variants = parseFormDataField(variants, [])
+        if (features !== undefined) product.features = parseFormDataField(features, [])
         if (metaTitle !== undefined) product.metaTitle = metaTitle
         if (metaDescription !== undefined) product.metaDescription = metaDescription
         if (trackInventory !== undefined) product.trackInventory = trackInventory
         if (weight !== undefined) product.weight = weight
         if (status !== undefined) product.status = status
+        if (selectedVariantOptions !== undefined) product.selectedVariantOptions = parseFormDataField(selectedVariantOptions, [])
 
         // Ensure one image is primary
         if (Array.isArray(product.images) && product.images.length > 0) {
@@ -983,6 +1157,11 @@ export const updateProduct = async (req, res, next) => {
         }
 
         await product.save()
+
+        // Regenerate SKUs if selectedVariantOptions was updated
+        if (selectedVariantOptions !== undefined) {
+            await product.generateSKUs()
+        }
 
         res.status(200).json({
             success: true,
@@ -999,6 +1178,9 @@ export const updateProduct = async (req, res, next) => {
                     tags: product.tags,
                     basePrice: product.basePrice,
                     comparePrice: product.comparePrice,
+                    variants: product.variants,
+                    selectedVariantOptions: product.selectedVariantOptions,
+                    skus: product.skus,
                     images: product.images,
                     status: product.status,
                     updatedAt: product.updatedAt
@@ -1190,22 +1372,28 @@ export const deleteSKU = async (req, res, next) => {
 ```
 
 #### `attachVariant()`
-**Purpose:** Attach an existing variant to a product, which triggers SKU regeneration.  
+**Purpose:** Attach a variant to a product with selected options, which triggers SKU regeneration using only the selected options.  
 **Access:** Private (Admin)  
-**Validation:** `productId` in params, `variantId` in body.  
-**Process:** Adds variant to product and regenerates SKUs.  
-**Response:** Updated product with new SKUs.
+**Validation:** `productId` in params, `variantId` and `optionIds` array in body. All optionIds must belong to the specified variant.  
+**Process:** Validates optionIds belong to variant, upserts selection in selectedVariantOptions, syncs variants array, and regenerates SKUs from selected options only.  
+**Response:** Updated product with new SKUs generated from selected options.
 
 **Controller Implementation:**
 ```javascript
 export const attachVariant = async (req, res, next) => {
     try {
         const { productId } = req.params
-        const { variantId } = req.body
+        const { variantId, optionIds } = req.body
 
+        // Validate request data
         const { error } = validateVariantAttachment(req.body)
         if (error) {
             return next(errorHandler(400, error.details[0].message))
+        }
+
+        // Validate optionIds if provided
+        if (!optionIds || !Array.isArray(optionIds) || optionIds.length === 0) {
+            return next(errorHandler(400, "optionIds array is required and must not be empty"))
         }
 
         const product = await Product.findById(productId)
@@ -1213,11 +1401,47 @@ export const attachVariant = async (req, res, next) => {
             return next(errorHandler(404, "Product not found"))
         }
 
-        if (product.variants.includes(variantId)) {
-            return next(errorHandler(400, "Variant already attached to product"))
+        // Fetch variant to validate optionIds
+        const variant = await Variant.findById(variantId)
+        if (!variant) {
+            return next(errorHandler(404, "Variant not found"))
         }
 
+        // Validate all optionIds belong to this variant
+        const variantOptionIds = new Set(variant.options.map(opt => opt._id.toString()))
+        const invalidOptionIds = optionIds.filter(optId => !variantOptionIds.has(optId.toString()))
+        
+        if (invalidOptionIds.length > 0) {
+            return next(errorHandler(400, `Invalid optionIds: ${invalidOptionIds.join(', ')}. These options do not belong to the specified variant.`))
+        }
+
+        // Initialize selectedVariantOptions if it doesn't exist
+        if (!product.selectedVariantOptions) {
+            product.selectedVariantOptions = []
+        }
+
+        // Check if variant selection already exists, update it; otherwise add new
+        const existingSelectionIndex = product.selectedVariantOptions.findIndex(
+            sel => sel.variantId.toString() === variantId.toString()
+        )
+
+        if (existingSelectionIndex >= 0) {
+            // Update existing selection
+            product.selectedVariantOptions[existingSelectionIndex].optionIds = optionIds
+        } else {
+            // Add new selection
+            product.selectedVariantOptions.push({
+                variantId,
+                optionIds
+            })
+        }
+
+        // Sync variants array (ensure variantId is in variants if not already)
+        if (!product.variants.some(id => id.toString() === variantId.toString())) {
         product.variants.push(variantId)
+        }
+
+        // Regenerate SKUs based on selected options
         await product.generateSKUs()
 
         res.status(200).json({
@@ -1227,6 +1451,7 @@ export const attachVariant = async (req, res, next) => {
                 product: {
                     id: product._id,
                     variants: product.variants,
+                    selectedVariantOptions: product.selectedVariantOptions,
                     skus: product.skus
                 }
             }
@@ -1240,10 +1465,10 @@ export const attachVariant = async (req, res, next) => {
 ```
 
 #### `detachVariant()`
-**Purpose:** Detach a variant from a product, removing all associated SKUs.  
+**Purpose:** Detach a variant from a product, removing it from selectedVariantOptions and variants array, then regenerating SKUs. If no variants remain, a default SKU is automatically created.  
 **Access:** Private (Admin)  
 **Validation:** `productId` in params, `variantId` in body.  
-**Process:** Removes variant and associated SKUs, creates default SKU if no variants remain.  
+**Process:** Removes variant from selectedVariantOptions and variants array, then regenerates SKUs (creates default SKU if no selectedVariantOptions remain).  
 **Response:** Updated product.
 
 **Controller Implementation:**
@@ -1253,6 +1478,7 @@ export const detachVariant = async (req, res, next) => {
         const { productId } = req.params
         const { variantId } = req.body
 
+        // Validate request data
         const { error } = validateVariantAttachment(req.body)
         if (error) {
             return next(errorHandler(400, error.details[0].message))
@@ -1263,22 +1489,18 @@ export const detachVariant = async (req, res, next) => {
             return next(errorHandler(404, "Product not found"))
         }
 
-        product.variants = product.variants.filter(id => id.toString() !== variantId)
-
-        product.skus = product.skus.filter(sku =>
-            !sku.attributes.some(attr => attr.variantId.toString() === variantId)
-        )
-
-        if (product.variants.length === 0) {
-            product.skus = [{
-                attributes: [],
-                price: product.basePrice,
-                stock: 0,
-                skuCode: `${product.slug.toUpperCase()}-DEFAULT`
-            }]
+        // Remove from selectedVariantOptions
+        if (product.selectedVariantOptions) {
+            product.selectedVariantOptions = product.selectedVariantOptions.filter(
+                sel => sel.variantId.toString() !== variantId.toString()
+            )
         }
 
-        await product.save()
+        // Remove variant from variants array
+        product.variants = product.variants.filter(id => id.toString() !== variantId.toString())
+
+        // Regenerate SKUs (will create default SKU if no selectedVariantOptions remain)
+        await product.generateSKUs()
 
         res.status(200).json({
             success: true,
@@ -1287,6 +1509,7 @@ export const detachVariant = async (req, res, next) => {
                 product: {
                     id: product._id,
                     variants: product.variants,
+                    selectedVariantOptions: product.selectedVariantOptions,
                     skus: product.skus
                 }
             }
@@ -1743,6 +1966,37 @@ export const getOptimizedImages = async (req, res, next) => {
         ]
       }
     ],
+    "selectedVariantOptions": [
+      {
+        "variantId": {
+          "_id": "65e26b1c09b068c201383813",
+          "name": "Size",
+          "options": [
+            {
+              "_id": "65e26b1c09b068c201383814",
+              "value": "42",
+              "isActive": true,
+              "sortOrder": 0,
+              "createdAt": "2026-02-15T10:00:00.000Z",
+              "updatedAt": "2026-02-15T10:00:00.000Z"
+            }
+          ],
+          "createdAt": "2026-02-15T10:00:00.000Z",
+          "updatedAt": "2026-02-15T10:00:00.000Z"
+        },
+        "optionIds": [
+          {
+            "_id": "65e26b1c09b068c201383814",
+            "value": "42",
+            "isActive": true,
+            "sortOrder": 0,
+            "createdAt": "2026-02-15T10:00:00.000Z",
+            "updatedAt": "2026-02-15T10:00:00.000Z"
+          }
+        ],
+        "_id": "65e26b1c09b068c201383820"
+      }
+    ],
     "skus": [
       {
         "attributes": [
@@ -1825,22 +2079,24 @@ export const getOptimizedImages = async (req, res, next) => {
 **Purpose:** Create a new product with images.  
 **Access:** Private (Admin Only)  
 **Headers:** `Authorization: Bearer <admin_token>`  
-**Body:** `multipart/form-data` with product fields and `images` files.  
+**Body:** `multipart/form-data` with product fields and `images` files, or `application/json` when no images.  
+**Note:** When using `multipart/form-data`, array and object fields (`categories`, `collections`, `tags`, `variants`, `features`, `selectedVariantOptions`) should be JSON stringified. The backend automatically parses these strings. When using `application/json`, send arrays/objects directly.  
 **Fields:**
 - `title` (required): Product title (`string`)
 - `description`: Product description (`string`)
 - `shortDescription`: Short description (`string`)
 - `brand`: Brand ObjectId (`string`)
-- `categories`: JSON array of Category ObjectIds (`string[]`)
-- `collections`: JSON array of Collection ObjectIds (`string[]`)
-- `tags`: JSON array of Tag ObjectIds (`string[]`)
+- `categories`: Array of Category ObjectIds - JSON stringified if FormData, array if JSON body (`string[]`)
+- `collections`: Array of Collection ObjectIds - JSON stringified if FormData, array if JSON body (`string[]`)
+- `tags`: Array of Tag ObjectIds - JSON stringified if FormData, array if JSON body (`string[]`)
 - `basePrice` (required): Base price (`number`)
 - `comparePrice`: Compare price (`number`)
-- `variants`: JSON array of Variant Objectids (`string[]`)
-- `features`: JSON array of feature strings (`string[]`)
+- `variants`: Array of Variant ObjectIds - JSON stringified if FormData, array if JSON body (`string[]`)
+- `selectedVariantOptions`: Array of variant selections with optionIds - JSON stringified if FormData, array if JSON body (`Array<{variantId: string, optionIds: string[]}>`)
+- `features`: Array of feature strings - JSON stringified if FormData, array if JSON body (`string[]`)
 - `trackInventory`: Boolean (`boolean`)
 - `weight`: Weight in grams (`number`)
-- `images`: Image files (up to 10) (`file[]`)
+- `images`: Image files (up to 10) (`file[]`) - only when using FormData
 **Response:** `201 Created`
 ```json
 {
@@ -1897,11 +2153,16 @@ export const getOptimizedImages = async (req, res, next) => {
 ```
 
 #### `PUT /api/products/:productId`
-**Purpose:** Update an existing product, including updating images.  
+**Purpose:** Update an existing product, including updating images and selected variant options. If `selectedVariantOptions` is updated, SKUs will be automatically regenerated.  
 **Access:** Private (Admin Only)  
 **Parameters:** `productId` (path) - The ID of the product to update.  
 **Headers:** `Authorization: Bearer <admin_token>`  
-**Body:** `multipart/form-data` with product fields, `images` files (new), and `keepImagePublicIds` (JSON array of image public IDs to retain).  
+**Body:** `multipart/form-data` with product fields and `images` files (new), or `application/json` when no images.  
+**Note:** When using `multipart/form-data`, array and object fields (`categories`, `collections`, `tags`, `variants`, `features`, `selectedVariantOptions`) should be JSON stringified. The backend automatically parses these strings. When using `application/json`, send arrays/objects directly.  
+**Fields:**
+- All fields from POST endpoint are supported
+- `keepImagePublicIds`: JSON array of image public IDs to retain (when using FormData, JSON stringify the array)
+- `keepImageDocIds`: JSON array of image document IDs to retain (when using FormData, JSON stringify the array)  
 **Response:** `200 OK`
 ```json
 {
@@ -1937,6 +2198,7 @@ export const getOptimizedImages = async (req, res, next) => {
       "basePrice": 1600,
       "comparePrice": 1900,
       "variants": [],
+      "selectedVariantOptions": [],
       "skus": [
         {
           "attributes": [],
@@ -2110,16 +2372,21 @@ export const getOptimizedImages = async (req, res, next) => {
 ```
 
 #### `POST /api/products/:productId/attach-variant`
-**Purpose:** Attach a variant to a product and regenerate SKUs.  
+**Purpose:** Attach a variant to a product with selected options and regenerate SKUs. Only the selected options will be used to generate SKU combinations.  
 **Access:** Private (Admin Only)  
 **Parameters:** `productId` (path) - The ID of the product.  
 **Headers:** `Authorization: Bearer <admin_token>`  
 **Body (JSON):**
 ```json
 {
-  "variantId": "65e26b1c09b068c201383811"
+  "variantId": "65e26b1c09b068c201383811",
+  "optionIds": ["65e26b1c09b068c201383812", "65e26b1c09b068c201383813"]
 }
 ```
+**Fields:**
+- `variantId` (required): The ID of the variant to attach
+- `optionIds` (required): Array of option IDs from the variant that should be included in SKU generation. All optionIds must belong to the specified variant.
+
 **Response:** `200 OK`
 ```json
 {
@@ -2129,6 +2396,12 @@ export const getOptimizedImages = async (req, res, next) => {
     "product": {
       "id": "65e26b1c09b068c201383816",
       "variants": ["65e26b1c09b068c201383811"],
+      "selectedVariantOptions": [
+        {
+          "variantId": "65e26b1c09b068c201383811",
+          "optionIds": ["65e26b1c09b068c201383812", "65e26b1c09b068c201383813"]
+        }
+      ],
       "skus": [
         {
           "_id": "...",
@@ -2138,6 +2411,15 @@ export const getOptimizedImages = async (req, res, next) => {
           "price": 1500,
           "stock": 0,
           "skuCode": "SNEAKER-COLOR-RED"
+        },
+        {
+          "_id": "...",
+          "attributes": [
+            { "variantId": "65e26b1c09b068c201383811", "optionId": "65e26b1c09b068c201383813" }
+          ],
+          "price": 1500,
+          "stock": 0,
+          "skuCode": "SNEAKER-COLOR-BLUE"
         }
       ]
     }
@@ -2146,7 +2428,7 @@ export const getOptimizedImages = async (req, res, next) => {
 ```
 
 #### `POST /api/products/:productId/detach-variant`
-**Purpose:** Detach a variant from a product, removing associated SKUs.  
+**Purpose:** Detach a variant from a product, removing associated SKUs. If no variants remain after detaching, a default SKU will be automatically created.  
 **Access:** Private (Admin Only)  
 **Parameters:** `productId` (path) - The ID of the product.  
 **Headers:** `Authorization: Bearer <admin_token>`  
@@ -2165,6 +2447,7 @@ export const getOptimizedImages = async (req, res, next) => {
     "product": {
       "id": "65e26b1c09b068c201383816",
       "variants": [],
+      "selectedVariantOptions": [],
       "skus": [
         {
           "_id": "...",
@@ -2230,13 +2513,14 @@ curl -X PATCH http://localhost:5000/api/products/<product_id>/skus/<sku_id> \
       }'
     ```
 
-### Attach Variant to Product
+### Attach Variant to Product with Selected Options
     ```bash
 curl -X POST http://localhost:5000/api/products/<product_id>/attach-variant \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <admin_access_token>" \
       -d '{
-        "variantId": "65e26b1c09b068c201383811"
+        "variantId": "65e26b1c09b068c201383811",
+        "optionIds": ["65e26b1c09b068c201383812", "65e26b1c09b068c201383813"]
       }'
     ```
 

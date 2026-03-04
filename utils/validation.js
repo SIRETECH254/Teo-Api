@@ -358,6 +358,17 @@ export const validateVariantAttachment = (data) => {
                 'string.empty': 'Variant ID is required',
                 'string.hex': 'Invalid variant ID format',
                 'string.length': 'Invalid variant ID length'
+            }),
+
+        optionIds: Joi.array()
+            .items(Joi.string().hex().length(24))
+            .min(1)
+            .optional()
+            .messages({
+                'array.base': 'optionIds must be an array',
+                'array.min': 'At least one optionId is required when attaching variant',
+                'string.hex': 'Invalid optionId format',
+                'string.length': 'Invalid optionId length'
             })
 
     })
