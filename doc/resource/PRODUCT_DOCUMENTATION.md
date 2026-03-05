@@ -623,7 +623,7 @@ import {
 #### `createProduct()`
 **Purpose:** Create a new product, handling image uploads and initial SKU generation. Always generates at least one default SKU if no variant options are selected.  
 **Access:** Private (Admin)  
-**Validation:** `title` is required.  
+**Validation:** `title` is required. `status` is optional and defaults to "draft" if not provided.  
 **Process:** Accepts both `multipart/form-data` (with JSON stringified arrays/objects) and JSON body formats. Automatically parses JSON strings from FormData fields. Generates unique slug, uploads images to Cloudinary, creates product, and always generates SKUs (default SKU if no selectedVariantOptions, or SKUs from selected options).  
 **Response:** The newly created product object.
 
@@ -631,7 +631,7 @@ import {
 ```javascript
 export const createProduct = async (req, res, next) => {
     try {
-        const { title, description, shortDescription, brand, categories, collections, tags, basePrice, comparePrice, variants, features, trackInventory, weight, selectedVariantOptions } = req.body
+        const { title, description, shortDescription, brand, categories, collections, tags, basePrice, comparePrice, variants, features, trackInventory, weight, selectedVariantOptions, status } = req.body
 
         if (!title) {
             return next(errorHandler(400, "Product title is required"))
@@ -719,6 +719,7 @@ export const createProduct = async (req, res, next) => {
             features: parseFormDataField(features, []),
             trackInventory,
             weight,
+            status: status || undefined, // Use provided status or default to schema default ("draft")
             createdBy: req.user._id
         })
 
@@ -1020,7 +1021,7 @@ export const getProductById = async (req, res) => {
 **Purpose:** Update an existing product, including managing image deletions (via `keepImagePublicIds` or `keepImageDocIds`), uploading new images, and updating selected variant options.  
 **Access:** Private (Admin)  
 **Validation:** `productId` in params.  
-**Process:** Accepts both `multipart/form-data` (with JSON stringified arrays/objects) and JSON body formats. Automatically parses JSON strings from FormData fields. Updates product fields, handles image retention/deletion, uploads new images, ensures one primary image, and regenerates SKUs if `selectedVariantOptions` is updated.  
+**Process:** Accepts both `multipart/form-data` (with JSON stringified arrays/objects) and JSON body formats. Automatically parses JSON strings from FormData fields. Updates product fields with change detection for `variants` and `selectedVariantOptions` to preserve existing data when updating unrelated fields. Handles image retention/deletion, uploads new images, ensures one primary image. Automatically syncs `selectedVariantOptions` when variants are removed (cleans up orphaned selections). Regenerates SKUs only when `variants` or `selectedVariantOptions` actually change, preventing unnecessary SKU regeneration.  
 **Response:** The updated product object.
 
 **Controller Implementation:**
@@ -1139,14 +1140,55 @@ export const updateProduct = async (req, res, next) => {
         if (tags !== undefined) product.tags = parseFormDataField(tags, [])
         if (basePrice !== undefined) product.basePrice = basePrice
         if (comparePrice !== undefined) product.comparePrice = comparePrice
-        if (variants !== undefined) product.variants = parseFormDataField(variants, [])
         if (features !== undefined) product.features = parseFormDataField(features, [])
+        
+        // Track changes for variants and selectedVariantOptions
+        let selectedVariantOptionsChanged = false
+        let variantsChanged = false
+        
+        // Check if variants changed
+        if (variants !== undefined) {
+            const parsedVariants = parseFormDataField(variants, [])
+            const existingVariantsStr = JSON.stringify((product.variants || []).map(v => v.toString()).sort())
+            const newVariantsStr = JSON.stringify(parsedVariants.map(v => v.toString()).sort())
+            if (existingVariantsStr !== newVariantsStr) {
+                product.variants = parsedVariants
+                variantsChanged = true
+            }
+        }
+        
+        // Only update selectedVariantOptions if it's provided AND different from current value
+        if (selectedVariantOptions !== undefined) {
+            const parsedSelectedVariantOptions = parseFormDataField(selectedVariantOptions, [])
+            // Compare with existing value to detect actual changes
+            const existingStr = JSON.stringify(product.selectedVariantOptions || [])
+            const newStr = JSON.stringify(parsedSelectedVariantOptions)
+            if (existingStr !== newStr) {
+                product.selectedVariantOptions = parsedSelectedVariantOptions
+                selectedVariantOptionsChanged = true
+            }
+        }
+        
+        // If variants changed, sync selectedVariantOptions to remove entries for removed variants
+        if (variantsChanged && !selectedVariantOptionsChanged) {
+            const currentVariantIds = new Set((product.variants || []).map(v => v.toString()))
+            if (product.selectedVariantOptions && product.selectedVariantOptions.length > 0) {
+                const filtered = product.selectedVariantOptions.filter(sel => {
+                    const variantId = typeof sel.variantId === 'object' ? sel.variantId._id.toString() : sel.variantId.toString()
+                    return currentVariantIds.has(variantId)
+                })
+                if (filtered.length !== product.selectedVariantOptions.length) {
+                    product.selectedVariantOptions = filtered
+                    selectedVariantOptionsChanged = true
+                }
+            }
+        }
+        
         if (metaTitle !== undefined) product.metaTitle = metaTitle
         if (metaDescription !== undefined) product.metaDescription = metaDescription
         if (trackInventory !== undefined) product.trackInventory = trackInventory
         if (weight !== undefined) product.weight = weight
         if (status !== undefined) product.status = status
-        if (selectedVariantOptions !== undefined) product.selectedVariantOptions = parseFormDataField(selectedVariantOptions, [])
 
         // Ensure one image is primary
         if (Array.isArray(product.images) && product.images.length > 0) {
@@ -1158,8 +1200,8 @@ export const updateProduct = async (req, res, next) => {
 
         await product.save()
 
-        // Regenerate SKUs if selectedVariantOptions was updated
-        if (selectedVariantOptions !== undefined) {
+        // Regenerate SKUs if selectedVariantOptions changed OR variants changed
+        if (selectedVariantOptionsChanged || variantsChanged) {
             await product.generateSKUs()
         }
 
@@ -2096,6 +2138,7 @@ export const getOptimizedImages = async (req, res, next) => {
 - `features`: Array of feature strings - JSON stringified if FormData, array if JSON body (`string[]`)
 - `trackInventory`: Boolean (`boolean`)
 - `weight`: Weight in grams (`number`)
+- `status`: Product status - optional, defaults to "draft" if not provided (`"active" | "draft" | "archived"`)
 - `images`: Image files (up to 10) (`file[]`) - only when using FormData
 **Response:** `201 Created`
 ```json
@@ -2153,7 +2196,7 @@ export const getOptimizedImages = async (req, res, next) => {
 ```
 
 #### `PUT /api/products/:productId`
-**Purpose:** Update an existing product, including updating images and selected variant options. If `selectedVariantOptions` is updated, SKUs will be automatically regenerated.  
+**Purpose:** Update an existing product, including updating images and selected variant options. The endpoint uses intelligent change detection to preserve existing `variants` and `selectedVariantOptions` when updating unrelated fields. If `variants` or `selectedVariantOptions` are updated, SKUs will be automatically regenerated. If variants are removed, orphaned `selectedVariantOptions` entries are automatically cleaned up.  
 **Access:** Private (Admin Only)  
 **Parameters:** `productId` (path) - The ID of the product to update.  
 **Headers:** `Authorization: Bearer <admin_token>`  
@@ -2484,7 +2527,8 @@ curl -X POST http://localhost:5000/api/products \
   -F "description=A comfortable and stylish sneaker for everyday wear." \
   -F "basePrice=79.99" \
   -F "categories=[\"65e26b1c09b068c201383810\"]" \
-      -F "brand=65e26b1c09b068c201383809"
+  -F "brand=65e26b1c09b068c201383809" \
+  -F "status=active"
     ```
 
 ### Get All Products (Public, filtered)

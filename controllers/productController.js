@@ -38,7 +38,7 @@ const populateOptionId = (variant, optionId) => {
 // Create a new product
 export const createProduct = async (req, res, next) => {
     try {
-        const { title, description, shortDescription, brand, categories, collections, tags, basePrice, comparePrice, variants, features, trackInventory, weight, selectedVariantOptions } = req.body
+        const { title, description, shortDescription, brand, categories, collections, tags, basePrice, comparePrice, variants, features, trackInventory, weight, selectedVariantOptions, status } = req.body
 
         if (!title) {
             return next(errorHandler(400, "Product title is required"))
@@ -54,6 +54,10 @@ export const createProduct = async (req, res, next) => {
                     const parsed = JSON.parse(value)
                     return parsed
                 } catch (e) {
+                    // If parsing fails, treat empty string as empty, others as invalid
+                    if (value.trim() === '') {
+                        return defaultValue
+                    }
                     return defaultValue
                 }
             }
@@ -126,6 +130,7 @@ export const createProduct = async (req, res, next) => {
             features: parseFormDataField(features, []),
             trackInventory,
             weight,
+            status: status || undefined, // Use provided status or default to schema default ("draft")
             createdBy: req.user._id
         })
 
@@ -489,19 +494,43 @@ export const updateProduct = async (req, res, next) => {
         }
 
         // Helper function to parse JSON strings from form-data, or return the value if already parsed
+        // Returns { parsed: value, wasProvided: boolean } to distinguish omitted vs empty fields
         const parseFormDataField = (value, defaultValue = []) => {
-            if (!value) return defaultValue
-            if (Array.isArray(value)) return value // Already an array
-            if (typeof value === 'object') return value // Already an object
+            // Field was not provided at all
+            if (value === undefined) {
+                return { parsed: defaultValue, wasProvided: false }
+            }
+            
+            // Field was provided as empty string - treat as explicitly empty
+            if (value === '' || value === null) {
+                return { parsed: defaultValue, wasProvided: true }
+            }
+            
+            // Already an array
+            if (Array.isArray(value)) {
+                return { parsed: value, wasProvided: true }
+            }
+            
+            // Already an object
+            if (typeof value === 'object') {
+                return { parsed: value, wasProvided: true }
+            }
+            
+            // Try to parse as JSON string
             if (typeof value === 'string') {
                 try {
                     const parsed = JSON.parse(value)
-                    return parsed
+                    return { parsed: parsed, wasProvided: true }
                 } catch (e) {
-                    return defaultValue
+                    // If parsing fails, treat empty string as explicitly empty, others as invalid
+                    if (value.trim() === '') {
+                        return { parsed: defaultValue, wasProvided: true }
+                    }
+                    return { parsed: defaultValue, wasProvided: true }
                 }
             }
-            return defaultValue
+            
+            return { parsed: defaultValue, wasProvided: true }
         }
 
         // Generate new slug if title changed
@@ -517,7 +546,25 @@ export const updateProduct = async (req, res, next) => {
         }
 
         // Handle image retention/removal using keep arrays
-        const parseJsonArray = (raw) => Array.isArray(raw) ? raw : []
+        // Supports both arrays and JSON strings from form-data
+        const parseJsonArray = (raw) => {
+            if (!raw) return []
+            if (Array.isArray(raw)) return raw
+            if (typeof raw === 'string') {
+                try {
+                    const parsed = JSON.parse(raw)
+                    return Array.isArray(parsed) ? parsed : []
+                } catch (e) {
+                    // If not valid JSON, treat as single value array
+                    return raw.trim() ? [raw] : []
+                }
+            }
+            return []
+        }
+
+        // Check if image keep arrays were explicitly provided (even if empty)
+        const keepImagePublicIdsProvided = req.body.keepImagePublicIds !== undefined || req.body.keepImages !== undefined
+        const keepImageDocIdsProvided = req.body.keepImageDocIds !== undefined
 
         const keepPublicIds = new Set([
             ...parseJsonArray(req.body.keepImagePublicIds),
@@ -526,7 +573,8 @@ export const updateProduct = async (req, res, next) => {
 
         const keepDocIds = new Set(parseJsonArray(req.body.keepImageDocIds).map(String))
 
-        if (keepPublicIds.size > 0 || keepDocIds.size > 0) {
+        // Process image removal if keep arrays were explicitly provided
+        if (keepImagePublicIdsProvided || keepImageDocIdsProvided) {
             const currentImages = Array.isArray(product.images) ? product.images : []
             const toDelete = currentImages.filter(img => !keepPublicIds.has(img.public_id) && !keepDocIds.has(String(img._id)))
 
@@ -587,14 +635,72 @@ export const updateProduct = async (req, res, next) => {
         if (description !== undefined) product.description = description
         if (shortDescription !== undefined) product.shortDescription = shortDescription
         if (brand !== undefined) product.brand = brand || undefined
-        if (categories !== undefined) product.categories = parseFormDataField(categories, [])
-        if (collections !== undefined) product.collections = parseFormDataField(collections, [])
-        if (tags !== undefined) product.tags = parseFormDataField(tags, [])
+        
+        // Parse array fields that can be omitted vs explicitly empty
+        if (categories !== undefined) {
+            const { parsed } = parseFormDataField(categories, [])
+            product.categories = parsed
+        }
+        if (collections !== undefined) {
+            const { parsed } = parseFormDataField(collections, [])
+            product.collections = parsed
+        }
+        if (tags !== undefined) {
+            const { parsed } = parseFormDataField(tags, [])
+            product.tags = parsed
+        }
         if (basePrice !== undefined) product.basePrice = basePrice
         if (comparePrice !== undefined) product.comparePrice = comparePrice
-        if (variants !== undefined) product.variants = parseFormDataField(variants, [])
-        if (features !== undefined) product.features = parseFormDataField(features, [])
-        if (selectedVariantOptions !== undefined) product.selectedVariantOptions = parseFormDataField(selectedVariantOptions, [])
+        if (features !== undefined) {
+            const { parsed } = parseFormDataField(features, [])
+            product.features = parsed
+        }
+        
+        // Track changes for variants and selectedVariantOptions
+        // CRITICAL: Only update these if explicitly provided in request
+        let selectedVariantOptionsChanged = false
+        let variantsChanged = false
+        
+        // Check if variants changed - only update if explicitly provided
+        const variantsParseResult = parseFormDataField(variants, [])
+        if (variantsParseResult.wasProvided) {
+            const parsedVariants = variantsParseResult.parsed
+            const existingVariantsStr = JSON.stringify((product.variants || []).map(v => v.toString()).sort())
+            const newVariantsStr = JSON.stringify(parsedVariants.map(v => v.toString()).sort())
+            if (existingVariantsStr !== newVariantsStr) {
+                product.variants = parsedVariants
+                variantsChanged = true
+            }
+        }
+        
+        // Only update selectedVariantOptions if it's explicitly provided AND different from current value
+        const selectedVariantOptionsParseResult = parseFormDataField(selectedVariantOptions, [])
+        if (selectedVariantOptionsParseResult.wasProvided) {
+            const parsedSelectedVariantOptions = selectedVariantOptionsParseResult.parsed
+            // Compare with existing value to detect actual changes
+            const existingStr = JSON.stringify(product.selectedVariantOptions || [])
+            const newStr = JSON.stringify(parsedSelectedVariantOptions)
+            if (existingStr !== newStr) {
+                product.selectedVariantOptions = parsedSelectedVariantOptions
+                selectedVariantOptionsChanged = true
+            }
+        }
+        
+        // If variants changed, sync selectedVariantOptions to remove entries for removed variants
+        if (variantsChanged && !selectedVariantOptionsChanged) {
+            const currentVariantIds = new Set((product.variants || []).map(v => v.toString()))
+            if (product.selectedVariantOptions && product.selectedVariantOptions.length > 0) {
+                const filtered = product.selectedVariantOptions.filter(sel => {
+                    const variantId = typeof sel.variantId === 'object' ? sel.variantId._id.toString() : sel.variantId.toString()
+                    return currentVariantIds.has(variantId)
+                })
+                if (filtered.length !== product.selectedVariantOptions.length) {
+                    product.selectedVariantOptions = filtered
+                    selectedVariantOptionsChanged = true
+                }
+            }
+        }
+        
         if (metaTitle !== undefined) product.metaTitle = metaTitle
         if (metaDescription !== undefined) product.metaDescription = metaDescription
         if (trackInventory !== undefined) product.trackInventory = trackInventory
@@ -611,8 +717,8 @@ export const updateProduct = async (req, res, next) => {
 
         await product.save()
 
-        // Regenerate SKUs if selectedVariantOptions was updated
-        if (selectedVariantOptions !== undefined) {
+        // Regenerate SKUs if selectedVariantOptions changed OR variants changed
+        if (selectedVariantOptionsChanged || variantsChanged) {
             await product.generateSKUs()
         }
 
