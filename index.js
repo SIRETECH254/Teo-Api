@@ -298,7 +298,7 @@ server.listen(PORT, (err) => {
     console.log(`🚀 TEO KICKS Server running on http://localhost:${PORT}`)
     console.log(`�� API Documentation: http://localhost:${PORT}/api/docs`)
     console.log(`🌍 Environment: ${process.env.NODE_ENV}`)
-    console.log(`🌍 CORS: ${process.env.CORS_ORIGIN}`)
+    console.log(`🌍 CORS: ${allowedOrigins}`)
     console.log(`💰 Currency: KES (Kenyan Shillings)`)
     console.log(`🔌 Socket.io enabled for real-time features`)
     console.log(`📱 Express app is accessible via the HTTP server`)
