@@ -3,7 +3,6 @@ import {
   getStoreConfig,
   createStoreConfig,
   updateStoreConfig,
-  deleteStoreConfig,
   initStoreConfig,
   getStoreConfigStatus
 } from '../controllers/storeConfigController.js'
@@ -323,39 +322,6 @@ router.post('/', verifyBearerToken, requireAdmin, createStoreConfig)
  *         description: Server error
  */
 router.put('/', verifyBearerToken, requireAdmin, updateStoreConfig)
-
-/**
- * @swagger
- * /api/store-config:
- *   delete:
- *     summary: Delete store configuration (Admin only)
- *     tags: [Store Configuration]
- *     security:
- *       - bearerAuth: []
- *     responses:
- *       200:
- *         description: Store configuration deleted successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 message:
- *                   type: string
- *                   example: "Store configuration deleted successfully"
- *       404:
- *         description: Store configuration not found
- *       401:
- *         description: Unauthorized
- *       403:
- *         description: Admin access required
- *       500:
- *         description: Server error
- */
-router.delete('/', verifyBearerToken, requireAdmin, deleteStoreConfig)
 
 /**
  * @swagger
