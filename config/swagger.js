@@ -21,7 +21,7 @@ const options = {
     servers: [
       {
         url: process.env.NODE_ENV === 'production' 
-          ? 'https://api.teokicks.com' 
+          ? 'https://teo-api.onrender.com' 
           : `http://localhost:${process.env.PORT || 3000}`,
         description: process.env.NODE_ENV === 'production' ? 'Production server' : 'Development server'
       }

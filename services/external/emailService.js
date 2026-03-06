@@ -103,7 +103,7 @@ export const sendPasswordResetEmail = async (email, resetToken, name = "User") =
 
         const transporter = createTransporter()
 
-        const resetUrl = `${process.env.CLIENT_BASE_URL}/reset-password?token=${resetToken}`
+        const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`
 
         const mailOptions = {
             from: `"TEO KICKS" <${process.env.SMTP_USER}>`,
@@ -206,7 +206,7 @@ export const sendWelcomeEmail = async (email, name) => {
                         </div>
                         
                         <div style="text-align: center; margin: 30px 0;">
-                            <a href="${process.env.CLIENT_BASE_URL}/products" style="background: #4B2E83; color: white; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">
+                            <a href="${process.env.FRONTEND_URL}/products" style="background: #4B2E83; color: white; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">
                                 Shop Now
                             </a>
                         </div>
