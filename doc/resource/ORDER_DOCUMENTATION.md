@@ -232,7 +232,7 @@ import Coupon from "../models/couponModel.js"
 **Access:** Private (Authenticated User)  
 **Validation:** `customerId`, `location`, `type`, `paymentPreference` are required. Checks for active cart, valid packaging, and coupon.  
 **Process:** Fetches cart and relevant details, calculates pricing, creates `Order` and `Invoice` documents, updates coupon usage, and marks the cart as converted. Emits Socket.io events for order and invoice creation.  
-**Response:** The ID of the newly created order.
+**Response:** The ID of the newly created order and its associated invoice.
 
 **Controller Implementation:**
 ```javascript
@@ -394,7 +394,7 @@ export const createOrder = async (req, res, next) => {
     io?.emit('order.created', { orderId: order._id.toString() })
     io?.emit('invoice.created', { invoiceId: invoice._id.toString(), orderId: order._id.toString() })
 
-    return res.status(201).json({ success: true, data: { orderId: order._id } })
+    return res.status(201).json({ success: true, data: { orderId: order._id, invoiceId: invoice._id } })
   } catch (err) {
     return next(err)
   }
@@ -650,12 +650,13 @@ export default router
 ```
 **Purpose:** Create a new order for the authenticated user (or a specified customer if admin) from their active cart.  
 **Access:** Private (Authenticated User)  
-**Response:** `201 Created` with the ID of the newly created order.
+**Response:** `201 Created` with the ID of the newly created order and its associated invoice.
 ```json
 {
   "success": true,
   "data": {
-    "orderId": "65e26b1c09b068c201383820"
+    "orderId": "65e26b1c09b068c201383820",
+    "invoiceId": "65e26b1c09b068c201383821"
   }
 }
 ```

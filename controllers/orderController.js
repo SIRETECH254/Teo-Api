@@ -168,7 +168,7 @@ export const createOrder = async (req, res, next) => {
     io?.emit('order.created', { orderId: order._id.toString() })
     io?.emit('invoice.created', { invoiceId: invoice._id.toString(), orderId: order._id.toString() })
 
-    return res.status(201).json({ success: true, data: { orderId: order._id } })
+    return res.status(201).json({ success: true, data: { orderId: order._id, invoiceId: invoice._id } })
   } catch (err) {
     return next(err)
   }
