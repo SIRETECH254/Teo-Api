@@ -494,45 +494,6 @@ export const payInvoice = async (req, res, next) => {
 }
 ```
 
-#### `queryMpesaStatus()`
-**Purpose:** Queries the status of an M-Pesa STK Push transaction by payment ID. This is a fallback polling endpoint that can be used if webhooks are delayed or missed.  
-**Access:** Private (Authenticated User)  
-**Validation:** `paymentId` in params. Optional `invoiceId` in query to locate payment if paymentId is not available.  
-**Process:** Finds the payment by ID (or by invoiceId and method if paymentId not found). Extracts the `checkoutRequestId` from processor references. Queries the Daraja API using `queryStkPushStatus()`. Maps Daraja result codes to payment status (0 = SUCCESS, others = PENDING or FAILED).  
-**Response:** Payment status, Daraja result code, and result description.
-
-**Controller Implementation:**
-```javascript
-export const queryMpesaStatus = async (req, res, next) => {
-  try {
-    const { paymentId } = req.params
-    const { invoiceId } = req.query || {}
-    let payment = await Payment.findById(paymentId)
-    if (!payment && invoiceId) {
-      // Try to locate the latest mpesa payment for this invoice as a fallback
-      payment = await Payment.findOne({ invoiceId, method: 'mpesa_stk' }).sort({ createdAt: -1 })
-    }
-    if (!payment) return res.status(404).json({ success: false, message: 'Payment not found' })
-
-    const checkoutRequestId = payment?.processorRefs?.daraja?.checkoutRequestId
-    if (!checkoutRequestId) {
-      return res.status(400).json({ success: false, message: 'No Daraja reference for this payment' })
-    }
-
-    const result = await queryStkPushStatus({ checkoutRequestId })
-    if (!result.ok) {
-      return res.status(502).json({ success: false, message: result.error, details: result.details })
-    }
-
-    // Map Daraja result codes: 0 = success, others are pending/failure
-    const status = result.resultCode === 0 ? 'SUCCESS' : (payment.status === 'SUCCESS' ? 'SUCCESS' : 'PENDING')
-    return res.json({ success: true, data: { status, resultCode: result.resultCode, resultDesc: result.resultDesc } })
-  } catch (err) {
-    return next(err)
-  }
-}
-```
-
 #### `queryMpesaByCheckoutId()`
 **Purpose:** Queries the status of an M-Pesa STK Push transaction by checkout request ID. This endpoint provides a simplified way to check payment status when only the checkout request ID is available. If the payment is successful, it automatically applies the payment to the invoice.  
 **Access:** Private (Authenticated User)  
@@ -545,9 +506,62 @@ export const queryMpesaStatus = async (req, res, next) => {
 export const queryMpesaByCheckoutId = async (req, res, next) => {
   try {
     const { checkoutRequestId } = req.params
+    const io = req.app.get('io')
 
     if (!checkoutRequestId) {
       return res.status(400).json({ success: false, message: 'checkoutRequestId is required' })
+    }
+
+    // Find payment by checkoutRequestId
+    const payment = await Payment.findOne({ 'processorRefs.daraja.checkoutRequestId': checkoutRequestId })
+    if (!payment) {
+      return res.status(404).json({ success: false, message: 'Payment not found for this checkout request' })
+    }
+
+    // Query Daraja API directly
+    const result = await queryStkPushStatus({ checkoutRequestId })
+    if (!result.ok) {
+      return res.status(502).json({ success: false, message: result.error, details: result.details })
+    }
+
+    console.log('===== SAFARICOM QUERY RESULT =====')
+    console.log('Result Code:', result.resultCode)
+    console.log('Result Desc:', result.resultDesc)
+    console.log('Full Result:', JSON.stringify(result.raw, null, 2))
+    console.log('==================================')
+
+    // Map Daraja result codes: 0 = success, others are pending/failure
+    const status = result.resultCode === 0 ? 'SUCCESS' : 'FAILED'
+    
+    // If successful, update payment status and apply payment
+    if (result.resultCode === 0 && payment.status !== 'SUCCESS') {
+      const invoice = await Invoice.findById(payment.invoiceId)
+      if (invoice) {
+        await applySuccessfulPayment({ invoice, payment, io, method: 'mpesa_stk' })
+      }
+    } else if (result.resultCode !== 0 && payment.status !== 'FAILED') {
+      // If failed, update payment status to FAILED
+      payment.status = 'FAILED'
+      await payment.save()
+      io?.emit('payment.updated', { paymentId: payment._id.toString(), status: payment.status })
+    }
+
+    return res.json({ 
+      success: true, 
+      data: { 
+        status, 
+        resultCode: result.resultCode, 
+        resultDesc: result.resultDesc,
+        paymentId: payment._id,
+        invoiceId: payment.invoiceId,
+        raw: result.raw
+      } 
+    })
+  } catch (err) {
+    return next(err)
+  }
+}
+```
     }
 
     // Find payment by checkoutRequestId
@@ -608,7 +622,7 @@ export const queryMpesaByCheckoutId = async (req, res, next) => {
 ```javascript
 import express from "express"
 import { authenticateToken } from "../middlewares/auth.js"
-import { initiatePayment, getPaymentById, markCashCollected, mpesaWebhook, paystackWebhook, payInvoice, queryMpesaStatus, queryMpesaByCheckoutId } from "../controllers/paymentController.js"
+import { initiatePayment, getPaymentById, markCashCollected, mpesaWebhook, paystackWebhook, payInvoice, queryMpesaByCheckoutId } from "../controllers/paymentController.js"
 
 
 const router = express.Router()
@@ -628,8 +642,6 @@ router.post('/webhooks/mpesa', mpesaWebhook)
 router.post('/webhooks/paystack', paystackWebhook)
 
 // Fallback polling for M-Pesa status
-router.get('/:id/mpesa-status', authenticateToken, queryMpesaStatus)
-
 // Query M-Pesa status by checkoutRequestId
 router.get('/mpesa-status/:checkoutRequestId', authenticateToken, queryMpesaByCheckoutId)
 
@@ -856,23 +868,6 @@ export default router
 }
 ```
 
-#### `GET /api/payments/:id/mpesa-status`
-**Headers:** `Authorization: Bearer <token>`  
-**Parameters:** `id` (path) - The ID of the payment to query.  
-**Query Parameters:** `invoiceId` (optional) - Alternative way to locate payment if paymentId is not available.  
-**Purpose:** Query the status of an M-Pesa STK Push transaction by payment ID. This is a fallback polling endpoint if webhooks are delayed.  
-**Access:** Private (Authenticated User)  
-**Response:** `200 OK` with payment status and Daraja result details.
-```json
-{
-  "success": true,
-  "data": {
-    "status": "SUCCESS",
-    "resultCode": 0,
-    "resultDesc": "The service request is processed successfully."
-  }
-}
-```
 
 #### `GET /api/payments/mpesa-status/:checkoutRequestId`
 **Headers:** `Authorization: Bearer <token>`  

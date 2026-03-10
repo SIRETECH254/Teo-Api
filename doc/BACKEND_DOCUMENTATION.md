@@ -723,7 +723,6 @@ interface IVariant {
 - `mpesaWebhook()` - M-Pesa (Daraja) callback handler
 - `paystackWebhook()` - Paystack callback handler
 - `payInvoice()` - Initiate payment with integrations (Mpesa, Paystack)
-- `queryMpesaStatus()` - Query M-Pesa STK push status for a payment
 - `queryMpesaByCheckoutId()` - Query M-Pesa STK push status by CheckoutRequestID
 
 ---

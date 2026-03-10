@@ -347,30 +347,56 @@ export const mpesaWebhook = async (req, res, next) => {
 }
 ```
 
-**File: `server/controllers/paymentController.js` - Status Query**
+**File: `server/controllers/paymentController.js` - Status Query by CheckoutID**
 ```javascript
-export const queryMpesaStatus = async (req, res, next) => {
+export const queryMpesaByCheckoutId = async (req, res, next) => {
   try {
-    const { paymentId } = req.params
-    const { invoiceId } = req.query || {}
-    let payment = await Payment.findById(paymentId)
-    if (!payment && invoiceId) {
-      payment = await Payment.findOne({ invoiceId, method: 'mpesa_stk' }).sort({ createdAt: -1 })
-    }
-    if (!payment) return res.status(404).json({ success: false, message: 'Payment not found' })
+    const { checkoutRequestId } = req.params
+    const io = req.app.get('io')
 
-    const checkoutRequestId = payment?.processorRefs?.daraja?.checkoutRequestId
     if (!checkoutRequestId) {
-      return res.status(400).json({ success: false, message: 'No Daraja reference for this payment' })
+      return res.status(400).json({ success: false, message: 'checkoutRequestId is required' })
     }
 
+    // Find payment by checkoutRequestId
+    const payment = await Payment.findOne({ 'processorRefs.daraja.checkoutRequestId': checkoutRequestId })
+    if (!payment) {
+      return res.status(404).json({ success: false, message: 'Payment not found for this checkout request' })
+    }
+
+    // Query Daraja API directly
     const result = await queryStkPushStatus({ checkoutRequestId })
     if (!result.ok) {
       return res.status(502).json({ success: false, message: result.error, details: result.details })
     }
 
-    const status = result.resultCode === 0 ? 'SUCCESS' : (payment.status === 'SUCCESS' ? 'SUCCESS' : 'PENDING')
-    return res.json({ success: true, data: { status, resultCode: result.resultCode, resultDesc: result.resultDesc } })
+    // Map Daraja result codes: 0 = success, others are pending/failure
+    const status = result.resultCode === 0 ? 'SUCCESS' : 'FAILED'
+    
+    // If successful, update payment status and apply payment
+    if (result.resultCode === 0 && payment.status !== 'SUCCESS') {
+      const invoice = await Invoice.findById(payment.invoiceId)
+      if (invoice) {
+        await applySuccessfulPayment({ invoice, payment, io, method: 'mpesa_stk' })
+      }
+    } else if (result.resultCode !== 0 && payment.status !== 'FAILED') {
+      // If failed, update payment status to FAILED
+      payment.status = 'FAILED'
+      await payment.save()
+      io?.emit('payment.updated', { paymentId: payment._id.toString(), status: payment.status })
+    }
+
+    return res.json({ 
+      success: true, 
+      data: { 
+        status, 
+        resultCode: result.resultCode, 
+        resultDesc: result.resultDesc,
+        paymentId: payment._id,
+        invoiceId: payment.invoiceId,
+        raw: result.raw
+      } 
+    })
   } catch (err) {
     return next(err)
   }
