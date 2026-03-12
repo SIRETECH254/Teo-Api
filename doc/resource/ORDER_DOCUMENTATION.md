@@ -431,7 +431,7 @@ export const getOrderById = async (req, res, next) => {
 
 #### `updateOrderStatus()`
 **Purpose:** Updates the fulfillment status of an order.  
-**Access:** Private (Authenticated User / Admin)  
+**Access:** Private (Admin)  
 **Validation:** `id` in params, `status` in body.  
 **Process:** Finds the order by ID and updates its status. Emits a `order.updated` Socket.io event.  
 **Response:** Success message.
@@ -457,7 +457,7 @@ export const updateOrderStatus = async (req, res, next) => {
 
 #### `assignRider()`
 **Purpose:** Placeholder function for assigning a rider to an order. The actual implementation would involve creating or updating a `Delivery` document.  
-**Access:** Private (Authenticated User / Admin)  
+**Access:** Private (Admin)  
 **Validation:** `id` in params.  
 **Process:** Returns a success message.  
 **Response:** Success message (placeholder).
@@ -474,9 +474,95 @@ export const assignRider = async (req, res, next) => {
 }
 ```
 
+#### `getUserOrders()`
+**Purpose:** Retrieves a paginated list of orders for the currently authenticated user.  
+**Access:** Private (Authenticated User)  
+**Validation:** Optional query parameters for pagination and filtering.  
+**Process:** Builds an aggregation pipeline to filter by `customerId` (from `req.user._id`), join related collections (invoice), sort, and paginate orders.  
+**Response:** Paginated list of the user's order objects.
+
+**Controller Implementation:**
+```javascript
+export const getUserOrders = async (req, res, next) => {
+  try {
+    const {
+      page = 1,
+      limit = 10,
+      status,
+      paymentStatus,
+      type,
+      location,
+      q
+    } = req.query || {}
+
+    const filters = { customerId: req.user._id }
+    if (status) filters.status = status
+    if (paymentStatus) filters.paymentStatus = paymentStatus
+    if (type) filters.type = type
+    if (location) filters.location = location
+
+    const skip = (Number(page) - 1) * Number(limit)
+
+    const pipeline = [
+      { $match: filters },
+      {
+        $lookup: {
+          from: 'invoices',
+          localField: 'invoiceId',
+          foreignField: '_id',
+          as: 'invoice'
+        }
+      },
+      { $unwind: { path: '$invoice', preserveNullAndEmptyArrays: true } },
+      // Search by invoice number if provided
+      ...(q ? [{ $match: { 'invoice.number': { $regex: q, $options: 'i' } } }] : []),
+      { $sort: { createdAt: -1 } },
+      {
+        $facet: {
+          data: [
+            { $skip: skip },
+            { $limit: Number(limit) },
+            {
+              $project: {
+                _id: 1,
+                createdAt: 1,
+                status: 1,
+                paymentStatus: 1,
+                pricing: 1,
+                invoice: { _id: '$invoice._id', number: '$invoice.number' }
+              }
+            }
+          ],
+          meta: [ { $count: 'total' } ]
+        }
+      }
+    ]
+
+    const result = await Order.aggregate(pipeline)
+    const data = result[0]?.data || []
+    const total = result[0]?.meta?.[0]?.total || 0
+
+    return res.json({
+      success: true,
+      data: {
+        orders: data,
+        pagination: {
+          currentPage: Number(page),
+          pageSize: Number(limit),
+          totalItems: total,
+          totalPages: Math.max(1, Math.ceil(total / Number(limit)))
+        }
+      }
+    })
+  } catch (err) {
+    return next(err)
+  }
+}
+```
+
 #### `getOrders()`
 **Purpose:** Retrieves a paginated list of orders, with various filtering options (e.g., status, payment status, type, location, search by invoice number).  
-**Access:** Private (Authenticated User / Admin)  
+**Access:** Private (Admin)  
 **Validation:** Optional query parameters for pagination and filtering.  
 **Process:** Builds an aggregation pipeline to filter, join related collections (invoice, customer), sort, and paginate orders.  
 **Response:** Paginated list of order objects.
@@ -574,7 +660,7 @@ export const getOrders = async (req, res, next) => {
 
 #### `deleteOrder()`
 **Purpose:** Deletes an order from the system.  
-**Access:** Private (Authenticated User / Admin)  
+**Access:** Private (Admin)  
 **Validation:** `id` in params.  
 **Process:** Finds and deletes the order document.  
 **Response:** Success message.
@@ -605,19 +691,20 @@ export const deleteOrder = async (req, res, next) => {
 
 ```javascript
 import express from "express"
-import { authenticateToken } from "../middlewares/auth.js"
-import { createOrder, getOrderById, updateOrderStatus, assignRider, getOrders, deleteOrder } from "../controllers/orderController.js"
+import { authenticateToken, requireAdmin } from "../middlewares/auth.js"
+import { createOrder, getOrderById, updateOrderStatus, assignRider, getOrders, deleteOrder, getUserOrders } from "../controllers/orderController.js"
 
 
 const router = express.Router()
 
 
 router.post('/', authenticateToken, createOrder)
-router.get('/', authenticateToken, getOrders)
+router.get('/', authenticateToken, requireAdmin, getOrders)
+router.get('/my-orders', authenticateToken, getUserOrders)
 router.get('/:id', authenticateToken, getOrderById)
-router.patch('/:id/status', authenticateToken, updateOrderStatus)
-router.patch('/:id/assign-rider', authenticateToken, assignRider)
-router.delete('/:id', authenticateToken, deleteOrder)
+router.patch('/:id/status', authenticateToken, requireAdmin, updateOrderStatus)
+router.patch('/:id/assign-rider', authenticateToken, requireAdmin, assignRider)
+router.delete('/:id', authenticateToken, requireAdmin, deleteOrder)
 
 
 export default router
@@ -664,8 +751,8 @@ export default router
 #### `GET /api/orders`
 **Headers:** `Authorization: Bearer <token>`  
 **Query Parameters:** `page`, `limit`, `status`, `paymentStatus`, `type`, `location`, `q` (search by invoice number).  
-**Purpose:** Retrieve a paginated list of orders, with options to filter by various order attributes and search by invoice number.  
-**Access:** Private (Authenticated User / Admin)  
+**Purpose:** Retrieve a paginated list of all orders in the system.  
+**Access:** Private (Admin)  
 **Response:** `200 OK` with paginated order data.
 ```json
 {
@@ -694,6 +781,47 @@ export default router
           "_id": "65e26b1c09b068c201383812",
           "name": "John Doe",
           "email": "john@example.com"
+        }
+      }
+    ],
+    "pagination": {
+      "currentPage": 1,
+      "pageSize": 10,
+      "totalItems": 1,
+      "totalPages": 1
+    }
+  }
+}
+```
+
+#### `GET /api/orders/my-orders`
+**Headers:** `Authorization: Bearer <token>`  
+**Query Parameters:** `page`, `limit`, `status`, `paymentStatus`, `type`, `location`, `q` (search by invoice number).  
+**Purpose:** Retrieve a paginated list of orders belonging to the authenticated user.  
+**Access:** Private (Authenticated User)  
+**Response:** `200 OK` with paginated order data.
+```json
+{
+  "success": true,
+  "data": {
+    "orders": [
+      {
+        "_id": "65e26b1c09b068c201383820",
+        "createdAt": "2026-02-15T10:30:00.000Z",
+        "status": "PLACED",
+        "paymentStatus": "UNPAID",
+        "pricing": {
+          "subtotal": 1500,
+          "discounts": 0,
+          "packagingFee": 50,
+          "schedulingFee": 0,
+          "deliveryFee": 0,
+          "tax": 0,
+          "total": 1550
+        },
+        "invoice": {
+          "_id": "65e26b1c09b068c201383821",
+          "number": "INV-2026-123456"
         }
       }
     ],
@@ -792,7 +920,7 @@ export default router
 }
 ```
 **Purpose:** Update the fulfillment status of an existing order.  
-**Access:** Private (Authenticated User / Admin)  
+**Access:** Private (Admin)  
 **Response:** `200 OK` with a success message.
 ```json
 {
@@ -804,7 +932,7 @@ export default router
 **Headers:** `Authorization: Bearer <token>`  
 **Parameters:** `id` (path) - The ID of the order.  
 **Purpose:** Assign a rider to an order (currently a placeholder).  
-**Access:** Private (Authenticated User / Admin)  
+**Access:** Private (Admin)  
 **Response:** `200 OK` with a success message.
 ```json
 {
@@ -816,7 +944,7 @@ export default router
 **Headers:** `Authorization: Bearer <token>`  
 **Parameters:** `id` (path) - The ID of the order to delete.  
 **Purpose:** Delete an order from the system.  
-**Access:** Private (Authenticated User / Admin)  
+**Access:** Private (Admin)  
 **Response:** `200 OK` with a success message.
 ```json
 {
@@ -855,7 +983,7 @@ curl -X POST http://localhost:5000/api/orders
 
 ### Get Orders (Customer)
 ```bash
-curl -X GET "http://localhost:5000/api/orders?page=1&limit=10&status=PLACED" 
+curl -X GET "http://localhost:5000/api/orders/my-orders?page=1&limit=10&status=PLACED" 
   -H "Authorization: Bearer <customer_access_token>"
 ```
 

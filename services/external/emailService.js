@@ -5,16 +5,14 @@ import { errorHandler } from "../../utils/error.js"
 // Create email transporter
 const createTransporter = () => {
 
-    if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS) {
+    if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
 
         throw errorHandler(500, "Email configuration is missing. Please check SMTP environment variables.")
 
     }
 
     return nodemailer.createTransport({
-        host: process.env.SMTP_HOST,
-        port: process.env.SMTP_PORT,
-        secure: process.env.SMTP_PORT == 465, // true for 465, false for other ports
+       service:"gmail",
         auth: {
             user: process.env.SMTP_USER,
             pass: process.env.SMTP_PASS
