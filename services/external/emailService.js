@@ -7,12 +7,26 @@ const createTransporter = () => {
 
     if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
 
-        throw errorHandler(500, "Email configuration is missing. Please check SMTP environment variables.")
+        throw errorHandler(500, "Email configuration is missing. Please check SMTP_USER and SMTP_PASS environment variables.")
 
     }
 
+    // Use explicit SMTP host if provided, otherwise fallback to Gmail service
+    if (process.env.SMTP_HOST) {
+        return nodemailer.createTransport({
+            host: process.env.SMTP_HOST,
+            port: parseInt(process.env.SMTP_PORT || "587"),
+            secure: process.env.SMTP_SECURE === 'true', // true for 465, false for other ports
+            auth: {
+                user: process.env.SMTP_USER,
+                pass: process.env.SMTP_PASS
+            }
+        })
+    }
+
+    // Default to Gmail service if no host is specified
     return nodemailer.createTransport({
-       service:"gmail",
+        service: "gmail",
         auth: {
             user: process.env.SMTP_USER,
             pass: process.env.SMTP_PASS
