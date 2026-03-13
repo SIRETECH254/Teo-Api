@@ -113,6 +113,9 @@ export const register = async (req, res, next) => {
 
         await user.save()
 
+        // Assign default customer role
+        await assignDefaultRole(user._id)
+
         // Send OTP via email and SMS
         const notificationResult = await sendOTPNotification(email, phone, otp, name)
 

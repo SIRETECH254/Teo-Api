@@ -29,9 +29,16 @@ The Appointment API uses JWT (JSON Web Tokens) for authentication with a unified
 - **Presaved Roles** - Roles are stored in database and fetched dynamically
 
 ### User Roles
-- `customer` - Default role for customers (assigned automatically on registration)
-- `admin` - Full system access, can manage all users and system settings
-- `staff` - Basic admin access, customer and appointment operations
+- `customer` - **System Role**. Default role for customers (assigned automatically on registration). Cannot be deleted.
+- `admin` - **System Role**. Full system access, can manage all users and system settings. Cannot be deleted.
+- `staff` - Basic admin access, customer and appointment operations.
+
+### Setup Roles Script
+The system includes a script to initialize core system roles:
+```bash
+npm run setup:roles
+```
+This script should be run during the initial setup to ensure `admin` and `customer` roles are correctly configured as protected system roles.
 
 ### Security Features
 - **OTP Verification** - Email and SMS verification for new accounts

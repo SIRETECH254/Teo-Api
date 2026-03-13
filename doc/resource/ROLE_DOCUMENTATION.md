@@ -28,6 +28,7 @@ interface IRole {
   name: string;
   description: string;
   isActive: boolean;
+  isSystemRole: boolean;
   createdBy: string; // User ObjectId
   updatedBy?: string; // User ObjectId
   createdAt: Date;
@@ -59,6 +60,10 @@ const roleSchema = new mongoose.Schema({
         type: Boolean,
         default: true
     },
+    isSystemRole: {
+        type: Boolean,
+        default: false
+    },
     createdBy: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
@@ -80,18 +85,27 @@ roleSchema.index({ isActive: 1 })
 roleSchema.statics.createDefaultRoles = async function(adminUserId) {
     const defaultRoles = [
         {
+            name: 'admin',
+            description: 'System Administrator with full access',
+            isSystemRole: true,
+            createdBy: adminUserId
+        },
+        {
             name: 'customer',
             description: 'Regular customer with basic shopping permissions',
+            isSystemRole: true,
             createdBy: adminUserId
         },
         {
             name: 'rider',
             description: 'Delivery personnel with order fulfillment permissions',
+            isSystemRole: false,
             createdBy: adminUserId
         },
         {
             name: 'staff',
             description: 'Internal staff with product and order management permissions',
+            isSystemRole: false,
             createdBy: adminUserId
         }
     ]
@@ -111,11 +125,12 @@ export default Role
 
 ### Validation Rules
 ```javascript
-name:        { required: true, type: String, unique: true, trim: true, lowercase: true }
-description: { required: true, type: String, trim: true }
-isActive:    { type: Boolean, default: true }
-createdBy:   { required: true, type: ObjectId, ref: 'User' }
-updatedBy:   { type: ObjectId, ref: 'User' }
+name:         { required: true, type: String, unique: true, trim: true, lowercase: true }
+description:  { required: true, type: String, trim: true }
+isActive:     { type: Boolean, default: true }
+isSystemRole: { type: Boolean, default: false }
+createdBy:    { required: true, type: ObjectId, ref: 'User' }
+updatedBy:    { type: ObjectId, ref: 'User' }
 ```
 
 ### Static Methods
@@ -123,8 +138,19 @@ updatedBy:   { type: ObjectId, ref: 'User' }
 #### `createDefaultRoles(adminUserId)`
 **Purpose:** Initialize default roles in the system.  
 **Parameters:** `adminUserId` - The ObjectId of the admin user creating the roles.  
-**Process:** Creates three default roles (customer, rider, staff) if they don't already exist.  
+**Process:** Creates default roles (admin, customer, rider, staff) if they don't already exist. Admin and Customer are marked as system roles.  
 **Returns:** Promise that resolves when all default roles are created.
+
+---
+
+## 🛠️ Initialization Script
+
+The system includes a dedicated script to set up core system roles:
+
+**Script Path:** `script/setupRoles.js`
+**Command:** `npm run setup:roles`
+
+This script ensures that the `admin` and `customer` roles exist and are correctly marked as `isSystemRole: true`. It should be run during the initial system setup.
 
 ---
 
@@ -283,8 +309,8 @@ export const getRoleById = async (req, res, next) => {
 #### `updateRole()`
 **Purpose:** Update an existing role.  
 **Access:** Private (Admin)  
-**Validation:** `id` in params. Checks for name conflicts if name is being updated.  
-**Process:** Finds and updates the role. If `name` is changed, validates uniqueness. Updates `updatedBy` field.  
+**Validation:** `id` in params. Checks for name conflicts if name is being updated. **System roles cannot be renamed.**  
+**Process:** Finds and updates the role. If `name` is changed, validates uniqueness and ensures it's not a system role. Updates `updatedBy` field.  
 **Response:** The updated role object.
 
 **Controller Implementation:**
@@ -342,8 +368,8 @@ export const updateRole = async (req, res, next) => {
 #### `deleteRole()`
 **Purpose:** Delete a role from the system.  
 **Access:** Private (Admin)  
-**Validation:** `id` in params. Prevents deletion if role is assigned to any users.  
-**Process:** Checks if role is assigned to users, then deletes the role if safe.  
+**Validation:** `id` in params. **System roles cannot be deleted.** Prevents deletion if role is assigned to any users.  
+**Process:** Checks if role is a system role, then checks if role is assigned to users, then deletes the role if safe.  
 **Response:** Success message.
 
 **Controller Implementation:**
@@ -725,7 +751,8 @@ curl -X PUT http://localhost:5000/api/roles/<role_id> \
 - **Authentication:** All role endpoints require a valid JWT token via the `Authorization: Bearer <token>` header.
 - **Authorization:** All role management operations are restricted to users with admin privileges (`isAdmin: true`).
 - **Role Name Uniqueness:** Role names are automatically converted to lowercase and must be unique across the system.
-- **Deletion Protection:** Roles cannot be deleted if they are currently assigned to any users, preventing orphaned role references.
+- **System Role Protection:** Core system roles (like `admin` and `customer`) are protected from deletion and renaming to ensure system integrity.
+- **Deletion Protection:** Standard roles cannot be deleted if they are currently assigned to any users, preventing orphaned role references.
 
 ---
 

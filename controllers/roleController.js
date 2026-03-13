@@ -191,6 +191,11 @@ export const updateRole = async (req, res, next) => {
         // Check if new name conflicts with existing role
         if (name && name.toLowerCase() !== role.name) {
 
+            // Prevent renaming system roles
+            if (role.isSystemRole) {
+                return next(errorHandler(400, "Cannot rename a system role"))
+            }
+
             const existingRole = await Role.findOne({ 
                 name: name.toLowerCase(),
                 _id: { $ne: req.params.id }
@@ -256,6 +261,13 @@ export const deleteRole = async (req, res, next) => {
         if (!role) {
 
             return next(errorHandler(404, "Role not found"))
+
+        }
+
+        // Prevent deleting system roles
+        if (role.isSystemRole) {
+
+            return next(errorHandler(400, "Cannot delete a system role"))
 
         }
 
