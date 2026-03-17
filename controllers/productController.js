@@ -176,77 +176,65 @@ export const createProduct = async (req, res, next) => {
 
 // Get all products with pagination and filtering
 export const getAllProducts = async (req, res) => {
-
     try {
-
-        const { page = 1, limit = 10, search, category, collection, status } = req.query
+        const { page = 1, limit = 10, search, category, collection, status, sort } = req.query
 
         const query = {}
 
-
-
-
-
         // Add search filter
-
         if (search) {
-
             query.$or = [
-
                 { title: { $regex: search, $options: 'i' } },
-
                 { description: { $regex: search, $options: 'i' } }
-
             ]
-
         }
-
-
-
-
 
         // Add category filter
-
         if (category) {
-
             query.categories = category
-
         }
-
-
-
-
 
         // Add collection filter
-
         if (collection) {
-
             query.collections = collection
-
         }
-
-
-
-
 
         // Add status filter
-
         if (status) {
-
             query.status = status
-
         }
 
+        // Determine sort order
+        let sortOption = { createdAt: -1 } // Default: Newest
 
-
-
+        if (sort) {
+            switch (sort) {
+                case 'name_asc':
+                    sortOption = { title: 1 }
+                    break
+                case 'name_desc':
+                    sortOption = { title: -1 }
+                    break
+                case 'price_asc':
+                    sortOption = { basePrice: 1 }
+                    break
+                case 'price_desc':
+                    sortOption = { basePrice: -1 }
+                    break
+                case 'oldest':
+                    sortOption = { createdAt: 1 }
+                    break
+                case 'newest':
+                    sortOption = { createdAt: -1 }
+                    break
+                default:
+                    sortOption = { createdAt: -1 }
+            }
+        }
 
         const options = {
-
             page: parseInt(page),
-
             limit: parseInt(limit),
-
             populate: [
                 'categories', 
                 'collections', 
@@ -269,13 +257,11 @@ export const getAllProducts = async (req, res) => {
                     path: 'skus.attributes.variantId',
                     select: 'name options',
                     populate: {
-                        path: 'options'
+                    path: 'options'
                     }
                 }
             ],
-
-            sort: { createdAt: -1 }
-
+            sort: sortOption
         }
 
 

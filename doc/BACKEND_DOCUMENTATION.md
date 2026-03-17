@@ -731,7 +731,7 @@ interface IVariant {
 
 #### `productController.js`
 - `createProduct()` - Create a new product (Admin)
-- `getAllProducts()` - Get all products with pagination and filtering (Public)
+- `getAllProducts()` - Get all products with pagination, search, and sorting (Public)
 - `getProductById()` - Get product by ID (Public)
 - `updateProduct()` - Update product (Admin)
 - `deleteProduct()` - Delete product (Admin)
@@ -1032,7 +1032,7 @@ GET    /mpesa-status/:checkoutRequestId // Query M-Pesa STK push status by check
 Base: `/api/products`
 
 ```typescript
-GET    /                          // Get all products with pagination and filtering (Public)
+GET    /                          // Get all products with pagination, search, and sorting (Public)
 GET    /:id                       // Get product by ID (Public)
 GET    /:productId/optimized-images // Get optimized image URLs for a product (Public)
 POST   /                          // Create a new product (Admin)

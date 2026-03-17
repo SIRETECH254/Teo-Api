@@ -762,10 +762,10 @@ export const createProduct = async (req, res, next) => {
 ```
 
 #### `getAllProducts()`
-**Purpose:** Retrieve all products with pagination, search, and filtering options by category, collection, status, etc.  
+**Purpose:** Retrieve all products with pagination, search, sorting, and filtering options by category, collection, status, etc.  
 **Access:** Public  
-**Validation:** Optional query parameters for `page`, `limit`, `search`, `category`, `collection`, `status`.  
-**Process:** Queries products based on filters, populates related documents (categories, collections, createdBy, brand, tags, variants with options, selectedVariantOptions.variantId with options, skus.attributes.variantId with options), converts to plain objects, and post-processes to populate `selectedVariantOptions.optionIds` and `skus.attributes.optionId` from variant options. Returns paginated results.  
+**Validation:** Optional query parameters for `page`, `limit`, `search`, `category`, `collection`, `status`, `sort`.  
+**Process:** Queries products based on filters, populates related documents (categories, collections, createdBy, brand, tags, variants with options, selectedVariantOptions.variantId with options, skus.attributes.variantId with options), determines sort order (defaulting to newest), converts to plain objects, and post-processes to populate `selectedVariantOptions.optionIds` and `skus.attributes.optionId` from variant options. Returns paginated results.  
 **Response:** Paginated list of product objects with all ObjectId references populated, including `selectedVariantOptions.optionIds` and `skus.attributes.optionId` as full option objects.
 
 **Controller Implementation:**
@@ -794,7 +794,7 @@ const populateOptionId = (variant, optionId) => {
 
 export const getAllProducts = async (req, res) => {
     try {
-        const { page = 1, limit = 10, search, category, collection, status } = req.query
+        const { page = 1, limit = 10, search, category, collection, status, sort } = req.query
 
         const query = {}
 
@@ -819,6 +819,34 @@ export const getAllProducts = async (req, res) => {
         // Add status filter
         if (status) {
             query.status = status
+        }
+
+        // Determine sort order
+        let sortOption = { createdAt: -1 } // Default: Newest
+
+        if (sort) {
+            switch (sort) {
+                case 'name_asc':
+                    sortOption = { title: 1 }
+                    break
+                case 'name_desc':
+                    sortOption = { title: -1 }
+                    break
+                case 'price_asc':
+                    sortOption = { basePrice: 1 }
+                    break
+                case 'price_desc':
+                    sortOption = { basePrice: -1 }
+                    break
+                case 'oldest':
+                    sortOption = { createdAt: 1 }
+                    break
+                case 'newest':
+                    sortOption = { createdAt: -1 }
+                    break
+                default:
+                    sortOption = { createdAt: -1 }
+            }
         }
 
         const options = {
@@ -850,7 +878,7 @@ export const getAllProducts = async (req, res) => {
                     }
                 }
             ],
-            sort: { createdAt: -1 }
+            sort: sortOption
         }
 
         const products = await Product.paginate(query, options)
@@ -1834,10 +1862,23 @@ export const getOptimizedImages = async (req, res, next) => {
 ### Route Details
 
 #### `GET /api/products`
-**Purpose:** Retrieve a paginated list of all products, with optional search and filtering.  
+**Purpose:** Retrieve a paginated list of all products, with optional search, sorting, and filtering.  
 **Access:** Public  
 **Headers:** (Optional)  
-**Query Parameters:** `page`, `limit`, `search`, `category`, `collection`, `status`  
+**Query Parameters:** 
+- `page`: Page number (default: 1)
+- `limit`: Number of items per page (default: 10)
+- `search`: Search term for title or description
+- `category`: Category ObjectId
+- `collection`: Collection ObjectId
+- `status`: Product status ("active", "draft", "archived")
+- `sort`: Sorting option:
+    - `name_asc`: Name A-Z
+    - `name_desc`: Name Z-A
+    - `price_asc`: Price Low to High
+    - `price_desc`: Price High to Low
+    - `newest`: Newest to Oldest (default)
+    - `oldest`: Oldest to Newest
 **Response:** `200 OK`
 ```json
 {
@@ -2531,9 +2572,9 @@ curl -X POST http://localhost:5000/api/products \
   -F "status=active"
     ```
 
-### Get All Products (Public, filtered)
+### Get All Products (Public, filtered & sorted)
     ```bash
-    curl -X GET "http://localhost:5000/api/products?page=1&limit=5&search=sneaker&category=65e26b1c09b068c201383810&status=active"
+    curl -X GET "http://localhost:5000/api/products?page=1&limit=5&search=sneaker&category=65e26b1c09b068c201383810&status=active&sort=price_asc"
     ```
 
 ### Update Product (changing price and adding new images)
