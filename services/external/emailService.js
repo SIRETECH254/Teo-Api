@@ -251,3 +251,68 @@ export const sendWelcomeEmail = async (email, name) => {
     }
 
 }
+
+
+// Send contact reply email
+export const sendContactReplyEmail = async (email, name, originalMessage, replyMessage) => {
+
+    if (!email || !replyMessage) {
+
+        throw errorHandler(400, "Email and reply message are required")
+
+    }
+
+    try {
+
+        const transporter = createTransporter()
+
+        const mailOptions = {
+            from: `"TEO KICKS Support" <${process.env.SMTP_USER}>`,
+            to: email,
+            subject: "Re: Your Inquiry at TEO KICKS",
+            html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                    <div style="text-align: center; margin-bottom: 30px;">
+                        <h1 style="color: #4B2E83; margin: 0;">TEO KICKS</h1>
+                        <p style="color: #666; margin: 5px 0;">Your Premium Footwear Destination</p>
+                    </div>
+                    
+                    <div style="background: #f8f9fa; padding: 30px; border-radius: 8px;">
+                        <h2 style="color: #333; margin-bottom: 20px;">Hello ${name || 'there'},</h2>
+                        <p style="color: #666; margin-bottom: 20px;">
+                            Thank you for reaching out to us. Here is our response to your inquiry:
+                        </p>
+                        
+                        <div style="background: white; border-left: 4px solid #4B2E83; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                            <p style="color: #333; margin: 0; white-space: pre-wrap;">${replyMessage}</p>
+                        </div>
+                        
+                        <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee;">
+                            <p style="color: #999; font-size: 13px; font-style: italic;">Your original message:</p>
+                            <p style="color: #999; font-size: 13px; white-space: pre-wrap;">"${originalMessage}"</p>
+                        </div>
+                    </div>
+                    
+                    <div style="text-align: center; margin-top: 30px; color: #999; font-size: 12px;">
+                        <p>TEO KICKS - Premium Footwear in Kenya</p>
+                        <p>This is an automated message, please do not reply directly to this email.</p>
+                    </div>
+                </div>
+            `
+        }
+
+        const result = await transporter.sendMail(mailOptions)
+
+        console.log(`Contact reply email sent successfully to ${email}:`, result.messageId)
+
+        return { success: true, messageId: result.messageId }
+
+    } catch (error) {
+
+        console.error('Error sending contact reply email:', error)
+
+        throw errorHandler(500, `Failed to send contact reply email: ${error.message}`)
+
+    }
+
+}

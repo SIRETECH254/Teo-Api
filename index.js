@@ -31,6 +31,7 @@ import couponRoute from "./routes/couponRoute.js"
 import storeConfigRoute from "./routes/storeConfigRoute.js"
 import packagingRoute from "./routes/packagingRoute.js"
 import statsRoute from "./routes/statsRoute.js"
+import contactRoute from "./routes/contactRoute.js"
 // import orderRoute from "./routes/orderRoute.js"
 // import paymentRoute from "./routes/paymentRoute.js"
 
@@ -129,6 +130,8 @@ app.use("/api/store-config", storeConfigRoute)
 app.use("/api/packaging", packagingRoute)
 
 app.use("/api/stats", statsRoute)
+
+app.use("/api/contact", contactRoute)
 // app.use("/api/payments", paymentRoute)
 
 
