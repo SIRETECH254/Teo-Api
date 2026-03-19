@@ -1,4 +1,5 @@
 import Product from "../models/productModel.js"
+import Variant from "../models/variantModel.js"
 import { validateProduct, validateSKU, validateVariantAttachment } from "../utils/validation.js"
 import { errorHandler } from "../utils/error.js"
 import { generateUniqueSlug } from "../utils/slugGenerator.js"
@@ -11,15 +12,56 @@ import {
 
 
 
+// Helper function to populate optionIds from variant's options
+const populateOptionIds = (variant, optionIds) => {
+    if (!variant || !variant.options || !optionIds || !Array.isArray(optionIds)) {
+        return optionIds
+    }
+    return optionIds.map(optionId => {
+        const optionIdStr = optionId.toString ? optionId.toString() : String(optionId)
+        const option = variant.options.find(opt => opt._id && opt._id.toString() === optionIdStr)
+        return option || optionId
+    })
+}
+
+// Helper function to populate optionId from variant's options
+const populateOptionId = (variant, optionId) => {
+    if (!variant || !variant.options || !optionId) {
+        return optionId
+    }
+    const optionIdStr = optionId.toString ? optionId.toString() : String(optionId)
+    const option = variant.options.find(opt => opt._id && opt._id.toString() === optionIdStr)
+    return option || optionId
+}
 
 
 // Create a new product
 export const createProduct = async (req, res, next) => {
     try {
-        const { title, description, shortDescription, brand, categories, collections, tags, basePrice, comparePrice, variants, features, trackInventory, weight } = req.body
+        const { title, description, shortDescription, brand, categories, collections, tags, basePrice, comparePrice, variants, features, trackInventory, weight, selectedVariantOptions, status } = req.body
 
         if (!title) {
             return next(errorHandler(400, "Product title is required"))
+        }
+
+        // Helper function to parse JSON strings from form-data, or return the value if already parsed
+        const parseFormDataField = (value, defaultValue = []) => {
+            if (!value) return defaultValue
+            if (Array.isArray(value)) return value // Already an array
+            if (typeof value === 'object') return value // Already an object
+            if (typeof value === 'string') {
+                try {
+                    const parsed = JSON.parse(value)
+                    return parsed
+                } catch (e) {
+                    // If parsing fails, treat empty string as empty, others as invalid
+                    if (value.trim() === '') {
+                        return defaultValue
+                    }
+                    return defaultValue
+                }
+            }
+            return defaultValue
         }
 
         // Generate unique slug
@@ -76,26 +118,25 @@ export const createProduct = async (req, res, next) => {
             slug,
             description,
             shortDescription,
-            brand,
-            categories: categories ? JSON.parse(categories) : [],
-            collections: collections ? JSON.parse(collections) : [],
-            tags: tags ? JSON.parse(tags) : [],
+            brand: brand || undefined,
+            categories: parseFormDataField(categories, []),
+            collections: parseFormDataField(collections, []),
+            tags: parseFormDataField(tags, []),
             basePrice,
             comparePrice,
-            variants: variants ? JSON.parse(variants) : [],
+            variants: parseFormDataField(variants, []),
+            selectedVariantOptions: parseFormDataField(selectedVariantOptions, []),
             images: processedImages,
-            features: features ? JSON.parse(features) : [],
+            features: parseFormDataField(features, []),
             trackInventory,
             weight,
+            status: status || undefined, // Use provided status or default to schema default ("draft")
             createdBy: req.user._id
         })
 
-        await product.save()
-
-        // Auto-generate SKUs if variants are attached
-        if (product.variants && product.variants.length > 0) {
-            await product.generateSKUs()
-        }
+        // Generate SKUs BEFORE first save to avoid null skuCode index error
+        // generateSKUs() will save the product, so we don't need to save separately
+        await product.generateSKUs()
 
         res.status(201).json({
             success: true,
@@ -135,81 +176,92 @@ export const createProduct = async (req, res, next) => {
 
 // Get all products with pagination and filtering
 export const getAllProducts = async (req, res) => {
-
     try {
-
-        const { page = 1, limit = 10, search, category, collection, status } = req.query
+        const { page = 1, limit = 10, search, category, collection, status, sort } = req.query
 
         const query = {}
 
-
-
-
-
         // Add search filter
-
         if (search) {
-
             query.$or = [
-
                 { title: { $regex: search, $options: 'i' } },
-
                 { description: { $regex: search, $options: 'i' } }
-
             ]
-
         }
-
-
-
-
 
         // Add category filter
-
         if (category) {
-
             query.categories = category
-
         }
-
-
-
-
 
         // Add collection filter
-
         if (collection) {
-
             query.collections = collection
-
         }
-
-
-
-
 
         // Add status filter
-
         if (status) {
-
             query.status = status
-
         }
 
+        // Determine sort order
+        let sortOption = { createdAt: -1 } // Default: Newest
 
-
-
+        if (sort) {
+            switch (sort) {
+                case 'name_asc':
+                    sortOption = { title: 1 }
+                    break
+                case 'name_desc':
+                    sortOption = { title: -1 }
+                    break
+                case 'price_asc':
+                    sortOption = { basePrice: 1 }
+                    break
+                case 'price_desc':
+                    sortOption = { basePrice: -1 }
+                    break
+                case 'oldest':
+                    sortOption = { createdAt: 1 }
+                    break
+                case 'newest':
+                    sortOption = { createdAt: -1 }
+                    break
+                default:
+                    sortOption = { createdAt: -1 }
+            }
+        }
 
         const options = {
-
             page: parseInt(page),
-
             limit: parseInt(limit),
-
-            populate: ['categories', 'collections', 'createdBy'],
-
-            sort: { createdAt: -1 }
-
+            populate: [
+                'categories', 
+                'collections', 
+                'createdBy',
+                'brand',
+                'tags',
+                {
+                    path: 'variants',
+                    populate: {
+                        path: 'options'
+                    }
+                },
+                {
+                    path: 'selectedVariantOptions.variantId',
+                    populate: {
+                        path: 'options'
+                    }
+                },
+                {
+                    path: 'skus.attributes.variantId',
+                    select: 'name options',
+                    populate: {
+                    path: 'options'
+                    }
+                }
+            ],
+            sort: sortOption
         }
 
 
@@ -217,6 +269,37 @@ export const getAllProducts = async (req, res) => {
 
 
         const products = await Product.paginate(query, options)
+
+        // Convert to plain objects and populate optionIds and optionId for all products
+        if (products.docs) {
+            products.docs = products.docs.map(product => {
+                const productObj = product.toObject ? product.toObject() : product
+                
+                // Populate optionIds in selectedVariantOptions
+                if (productObj.selectedVariantOptions) {
+                    productObj.selectedVariantOptions.forEach(sel => {
+                        if (sel.variantId && sel.variantId.options) {
+                            sel.optionIds = populateOptionIds(sel.variantId, sel.optionIds)
+                        }
+                    })
+                }
+
+                // Populate optionId in SKU attributes
+                if (productObj.skus) {
+                    productObj.skus.forEach(sku => {
+                        if (sku.attributes) {
+                            sku.attributes.forEach(attr => {
+                                if (attr.variantId && attr.variantId.options) {
+                                    attr.optionId = populateOptionId(attr.variantId, attr.optionId)
+                                }
+                            })
+                        }
+                    })
+                }
+                
+                return productObj
+            })
+        }
 
 
 
@@ -283,12 +366,32 @@ export const getProductById = async (req, res) => {
 
             .populate('createdBy', 'name email')
 
+            .populate('brand')
+
+            .populate('tags')
+
             .populate({
                 path: 'variants',
                 populate: {
                     path: 'options'
                 }
             })
+
+            .populate({
+                path: 'selectedVariantOptions.variantId',
+                populate: {
+                    path: 'options'
+                }
+            })
+
+            .populate({
+                path: 'skus.attributes.variantId',
+                select: 'name options',
+                populate: {
+                    path: 'options'
+                }
+            })
+            .lean()
 
 
 
@@ -304,6 +407,28 @@ export const getProductById = async (req, res) => {
 
             })
 
+        }
+
+        // Populate optionIds in selectedVariantOptions
+        if (product.selectedVariantOptions) {
+            product.selectedVariantOptions.forEach(sel => {
+                if (sel.variantId && sel.variantId.options) {
+                    sel.optionIds = populateOptionIds(sel.variantId, sel.optionIds)
+                }
+            })
+        }
+
+        // Populate optionId in SKU attributes
+        if (product.skus) {
+            product.skus.forEach(sku => {
+                if (sku.attributes) {
+                    sku.attributes.forEach(attr => {
+                        if (attr.variantId && attr.variantId.options) {
+                            attr.optionId = populateOptionId(attr.variantId, attr.optionId)
+                        }
+                    })
+                }
+            })
         }
 
 
@@ -346,12 +471,52 @@ export const getProductById = async (req, res) => {
 export const updateProduct = async (req, res, next) => {
     try {
         const { productId } = req.params
-        const { title, description, shortDescription, brand, categories, collections, tags, basePrice, comparePrice, variants, features, metaTitle, metaDescription, trackInventory, weight, status } = req.body
+        const { title, description, shortDescription, brand, categories, collections, tags, basePrice, comparePrice, variants, features, metaTitle, metaDescription, trackInventory, weight, status, selectedVariantOptions } = req.body
 
         const product = await Product.findById(productId)
 
         if (!product) {
             return next(errorHandler(404, "Product not found"))
+        }
+
+        // Helper function to parse JSON strings from form-data, or return the value if already parsed
+        // Returns { parsed: value, wasProvided: boolean } to distinguish omitted vs empty fields
+        const parseFormDataField = (value, defaultValue = []) => {
+            // Field was not provided at all
+            if (value === undefined) {
+                return { parsed: defaultValue, wasProvided: false }
+            }
+            
+            // Field was provided as empty string - treat as explicitly empty
+            if (value === '' || value === null) {
+                return { parsed: defaultValue, wasProvided: true }
+            }
+            
+            // Already an array
+            if (Array.isArray(value)) {
+                return { parsed: value, wasProvided: true }
+            }
+            
+            // Already an object
+            if (typeof value === 'object') {
+                return { parsed: value, wasProvided: true }
+            }
+            
+            // Try to parse as JSON string
+            if (typeof value === 'string') {
+                try {
+                    const parsed = JSON.parse(value)
+                    return { parsed: parsed, wasProvided: true }
+                } catch (e) {
+                    // If parsing fails, treat empty string as explicitly empty, others as invalid
+                    if (value.trim() === '') {
+                        return { parsed: defaultValue, wasProvided: true }
+                    }
+                    return { parsed: defaultValue, wasProvided: true }
+                }
+            }
+            
+            return { parsed: defaultValue, wasProvided: true }
         }
 
         // Generate new slug if title changed
@@ -367,18 +532,35 @@ export const updateProduct = async (req, res, next) => {
         }
 
         // Handle image retention/removal using keep arrays
+        // Supports both arrays and JSON strings from form-data
         const parseJsonArray = (raw) => {
-            try { const arr = JSON.parse(raw); return Array.isArray(arr) ? arr : [] } catch { return [] }
+            if (!raw) return []
+            if (Array.isArray(raw)) return raw
+            if (typeof raw === 'string') {
+                try {
+                    const parsed = JSON.parse(raw)
+                    return Array.isArray(parsed) ? parsed : []
+                } catch (e) {
+                    // If not valid JSON, treat as single value array
+                    return raw.trim() ? [raw] : []
+                }
+            }
+            return []
         }
 
+        // Check if image keep arrays were explicitly provided (even if empty)
+        const keepImagePublicIdsProvided = req.body.keepImagePublicIds !== undefined || req.body.keepImages !== undefined
+        const keepImageDocIdsProvided = req.body.keepImageDocIds !== undefined
+
         const keepPublicIds = new Set([
-            ...parseJsonArray(req.body.keepImagePublicIds || '[]'),
-            ...parseJsonArray(req.body.keepImages || '[]'), // backward compat
+            ...parseJsonArray(req.body.keepImagePublicIds),
+            ...parseJsonArray(req.body.keepImages), // backward compat
         ].filter(Boolean))
 
-        const keepDocIds = new Set(parseJsonArray(req.body.keepImageDocIds || '[]').map(String))
+        const keepDocIds = new Set(parseJsonArray(req.body.keepImageDocIds).map(String))
 
-        if (keepPublicIds.size > 0 || keepDocIds.size > 0) {
+        // Process image removal if keep arrays were explicitly provided
+        if (keepImagePublicIdsProvided || keepImageDocIdsProvided) {
             const currentImages = Array.isArray(product.images) ? product.images : []
             const toDelete = currentImages.filter(img => !keepPublicIds.has(img.public_id) && !keepDocIds.has(String(img._id)))
 
@@ -438,14 +620,73 @@ export const updateProduct = async (req, res, next) => {
         if (title) product.title = title
         if (description !== undefined) product.description = description
         if (shortDescription !== undefined) product.shortDescription = shortDescription
-        if (brand !== undefined) product.brand = brand
-        if (categories !== undefined) product.categories = JSON.parse(categories)
-        if (collections !== undefined) product.collections = JSON.parse(collections)
-        if (tags !== undefined) product.tags = JSON.parse(tags)
+        if (brand !== undefined) product.brand = brand || undefined
+        
+        // Parse array fields that can be omitted vs explicitly empty
+        if (categories !== undefined) {
+            const { parsed } = parseFormDataField(categories, [])
+            product.categories = parsed
+        }
+        if (collections !== undefined) {
+            const { parsed } = parseFormDataField(collections, [])
+            product.collections = parsed
+        }
+        if (tags !== undefined) {
+            const { parsed } = parseFormDataField(tags, [])
+            product.tags = parsed
+        }
         if (basePrice !== undefined) product.basePrice = basePrice
         if (comparePrice !== undefined) product.comparePrice = comparePrice
-        if (variants !== undefined) product.variants = JSON.parse(variants)
-        if (features !== undefined) product.features = JSON.parse(features)
+        if (features !== undefined) {
+            const { parsed } = parseFormDataField(features, [])
+            product.features = parsed
+        }
+        
+        // Track changes for variants and selectedVariantOptions
+        // CRITICAL: Only update these if explicitly provided in request
+        let selectedVariantOptionsChanged = false
+        let variantsChanged = false
+        
+        // Check if variants changed - only update if explicitly provided
+        const variantsParseResult = parseFormDataField(variants, [])
+        if (variantsParseResult.wasProvided) {
+            const parsedVariants = variantsParseResult.parsed
+            const existingVariantsStr = JSON.stringify((product.variants || []).map(v => v.toString()).sort())
+            const newVariantsStr = JSON.stringify(parsedVariants.map(v => v.toString()).sort())
+            if (existingVariantsStr !== newVariantsStr) {
+                product.variants = parsedVariants
+                variantsChanged = true
+            }
+        }
+        
+        // Only update selectedVariantOptions if it's explicitly provided AND different from current value
+        const selectedVariantOptionsParseResult = parseFormDataField(selectedVariantOptions, [])
+        if (selectedVariantOptionsParseResult.wasProvided) {
+            const parsedSelectedVariantOptions = selectedVariantOptionsParseResult.parsed
+            // Compare with existing value to detect actual changes
+            const existingStr = JSON.stringify(product.selectedVariantOptions || [])
+            const newStr = JSON.stringify(parsedSelectedVariantOptions)
+            if (existingStr !== newStr) {
+                product.selectedVariantOptions = parsedSelectedVariantOptions
+                selectedVariantOptionsChanged = true
+            }
+        }
+        
+        // If variants changed, sync selectedVariantOptions to remove entries for removed variants
+        if (variantsChanged && !selectedVariantOptionsChanged) {
+            const currentVariantIds = new Set((product.variants || []).map(v => v.toString()))
+            if (product.selectedVariantOptions && product.selectedVariantOptions.length > 0) {
+                const filtered = product.selectedVariantOptions.filter(sel => {
+                    const variantId = typeof sel.variantId === 'object' ? sel.variantId._id.toString() : sel.variantId.toString()
+                    return currentVariantIds.has(variantId)
+                })
+                if (filtered.length !== product.selectedVariantOptions.length) {
+                    product.selectedVariantOptions = filtered
+                    selectedVariantOptionsChanged = true
+                }
+            }
+        }
+        
         if (metaTitle !== undefined) product.metaTitle = metaTitle
         if (metaDescription !== undefined) product.metaDescription = metaDescription
         if (trackInventory !== undefined) product.trackInventory = trackInventory
@@ -462,6 +703,11 @@ export const updateProduct = async (req, res, next) => {
 
         await product.save()
 
+        // Regenerate SKUs if selectedVariantOptions changed OR variants changed
+        if (selectedVariantOptionsChanged || variantsChanged) {
+            await product.generateSKUs()
+        }
+
         res.status(200).json({
             success: true,
             message: "Product updated successfully",
@@ -477,6 +723,9 @@ export const updateProduct = async (req, res, next) => {
                     tags: product.tags,
                     basePrice: product.basePrice,
                     comparePrice: product.comparePrice,
+                    variants: product.variants,
+                    selectedVariantOptions: product.selectedVariantOptions,
+                    skus: product.skus,
                     images: product.images,
                     status: product.status,
                     updatedAt: product.updatedAt
@@ -722,7 +971,7 @@ export const deleteSKU = async (req, res, next) => {
 export const attachVariant = async (req, res, next) => {
     try {
         const { productId } = req.params
-        const { variantId } = req.body
+        const { variantId, optionIds } = req.body
 
         // Validate request data
         const { error } = validateVariantAttachment(req.body)
@@ -730,18 +979,57 @@ export const attachVariant = async (req, res, next) => {
             return next(errorHandler(400, error.details[0].message))
         }
 
+        // Validate optionIds if provided
+        if (!optionIds || !Array.isArray(optionIds) || optionIds.length === 0) {
+            return next(errorHandler(400, "optionIds array is required and must not be empty"))
+        }
+
         const product = await Product.findById(productId)
         if (!product) {
             return next(errorHandler(404, "Product not found"))
         }
 
-        // Check if variant already attached
-        if (product.variants.includes(variantId)) {
-            return next(errorHandler(400, "Variant already attached to product"))
+        // Fetch variant to validate optionIds
+        const variant = await Variant.findById(variantId)
+        if (!variant) {
+            return next(errorHandler(404, "Variant not found"))
         }
 
-        // Add variant and regenerate SKUs
-        product.variants.push(variantId)
+        // Validate all optionIds belong to this variant
+        const variantOptionIds = new Set(variant.options.map(opt => opt._id.toString()))
+        const invalidOptionIds = optionIds.filter(optId => !variantOptionIds.has(optId.toString()))
+        
+        if (invalidOptionIds.length > 0) {
+            return next(errorHandler(400, `Invalid optionIds: ${invalidOptionIds.join(', ')}. These options do not belong to the specified variant.`))
+        }
+
+        // Initialize selectedVariantOptions if it doesn't exist
+        if (!product.selectedVariantOptions) {
+            product.selectedVariantOptions = []
+        }
+
+        // Check if variant selection already exists, update it; otherwise add new
+        const existingSelectionIndex = product.selectedVariantOptions.findIndex(
+            sel => sel.variantId.toString() === variantId.toString()
+        )
+
+        if (existingSelectionIndex >= 0) {
+            // Update existing selection
+            product.selectedVariantOptions[existingSelectionIndex].optionIds = optionIds
+        } else {
+            // Add new selection
+            product.selectedVariantOptions.push({
+                variantId,
+                optionIds
+            })
+        }
+
+        // Sync variants array (ensure variantId is in variants if not already)
+        if (!product.variants.some(id => id.toString() === variantId.toString())) {
+            product.variants.push(variantId)
+        }
+
+        // Regenerate SKUs based on selected options
         await product.generateSKUs()
 
         res.status(200).json({
@@ -751,6 +1039,7 @@ export const attachVariant = async (req, res, next) => {
                 product: {
                     id: product._id,
                     variants: product.variants,
+                    selectedVariantOptions: product.selectedVariantOptions,
                     skus: product.skus
                 }
             }
@@ -781,25 +1070,18 @@ export const detachVariant = async (req, res, next) => {
             return next(errorHandler(404, "Product not found"))
         }
 
-        // Remove variant
-        product.variants = product.variants.filter(id => id.toString() !== variantId)
-
-        // Remove SKUs that contain this variant
-        product.skus = product.skus.filter(sku =>
-            !sku.attributes.some(attr => attr.variantId.toString() === variantId)
-        )
-
-        // If no variants left, create default SKU
-        if (product.variants.length === 0) {
-            product.skus = [{
-                attributes: [],
-                price: product.basePrice,
-                stock: 0,
-                skuCode: `${product.slug.toUpperCase()}-DEFAULT`
-            }]
+        // Remove from selectedVariantOptions
+        if (product.selectedVariantOptions) {
+            product.selectedVariantOptions = product.selectedVariantOptions.filter(
+                sel => sel.variantId.toString() !== variantId.toString()
+            )
         }
 
-        await product.save()
+        // Remove variant from variants array
+        product.variants = product.variants.filter(id => id.toString() !== variantId.toString())
+
+        // Regenerate SKUs (will create default SKU if no selectedVariantOptions remain)
+        await product.generateSKUs()
 
         res.status(200).json({
             success: true,
@@ -808,6 +1090,7 @@ export const detachVariant = async (req, res, next) => {
                 product: {
                     id: product._id,
                     variants: product.variants,
+                    selectedVariantOptions: product.selectedVariantOptions,
                     skus: product.skus
                 }
             }

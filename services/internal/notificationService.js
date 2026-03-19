@@ -1,6 +1,6 @@
-import { sendOTPEmail, sendPasswordResetEmail, sendWelcomeEmail } from "./emailService.js"
-import { sendOTPSMS, sendPasswordResetSMS, sendWelcomeSMS, sendOrderNotificationSMS } from "./smsService.js"
-import { errorHandler } from "../utils/error.js"
+import { sendOTPEmail, sendPasswordResetEmail, sendWelcomeEmail } from "../external/emailService.js"
+import { sendOTPSMS, sendPasswordResetSMS, sendWelcomeSMS, sendOrderNotificationSMS } from "../external/smsService.js"
+import { errorHandler } from "../../utils/error.js"
 
 
 // Send OTP via both email and SMS

@@ -1,10 +1,10 @@
-import Payment from "../models/paymentModel.js"
-import Invoice from "../models/invoiceModel.js"
-import Order from "../models/orderModel.js"
-import Receipt from "../models/receiptModel.js"
-import Product from "../models/productModel.js"
-import { initiateStkPush } from "./external/darajaService.js"
-import { initTransaction } from "./external/paystackService.js"
+import Payment from "../../models/paymentModel.js"
+import Invoice from "../../models/invoiceModel.js"
+import Order from "../../models/orderModel.js"
+import Receipt from "../../models/receiptModel.js"
+import Product from "../../models/productModel.js"
+import { initiateStkPush } from "../external/darajaService.js"
+import { initTransaction } from "../external/paystackService.js"
 
 
 const generateReceiptNumber = () => `RCP-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`

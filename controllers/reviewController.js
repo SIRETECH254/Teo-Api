@@ -210,6 +210,7 @@ export const getReviewById = async (req, res, next) => {
         const review = await Review.findById(reviewId)
         .populate('user', 'name email avatar')
         .populate('product', 'title images')
+        .populate('orderId')
 
         if (!review) {
             return res.status(404).json({

@@ -168,7 +168,7 @@ export const createOrder = async (req, res, next) => {
     io?.emit('order.created', { orderId: order._id.toString() })
     io?.emit('invoice.created', { invoiceId: invoice._id.toString(), orderId: order._id.toString() })
 
-    return res.status(201).json({ success: true, data: { orderId: order._id } })
+    return res.status(201).json({ success: true, data: { orderId: order._id, invoiceId: invoice._id } })
   } catch (err) {
     return next(err)
   }
@@ -183,6 +183,7 @@ export const getOrderById = async (req, res, next) => {
       .populate('receiptId')
       .populate('addressId')
       .populate({ path: 'customerId', select: 'name email phone' })
+      .populate({ path: 'createdBy', select: 'name email phone' })
       .populate({ path: 'items.productId', select: 'title primaryImage images basePrice' })
 
     if (!order) return res.status(404).json({ success: false, message: 'Order not found' })
@@ -214,6 +215,83 @@ export const assignRider = async (req, res, next) => {
   try {
     // Placeholder; real implementation will create/update Delivery doc
     return res.json({ success: true })
+  } catch (err) {
+    return next(err)
+  }
+}
+
+
+export const getUserOrders = async (req, res, next) => {
+  try {
+    const {
+      page = 1,
+      limit = 10,
+      status,
+      paymentStatus,
+      type,
+      location,
+      q
+    } = req.query || {}
+
+    const filters = { customerId: req.user._id }
+    if (status) filters.status = status
+    if (paymentStatus) filters.paymentStatus = paymentStatus
+    if (type) filters.type = type
+    if (location) filters.location = location
+
+    const skip = (Number(page) - 1) * Number(limit)
+
+    const pipeline = [
+      { $match: filters },
+      {
+        $lookup: {
+          from: 'invoices',
+          localField: 'invoiceId',
+          foreignField: '_id',
+          as: 'invoice'
+        }
+      },
+      { $unwind: { path: '$invoice', preserveNullAndEmptyArrays: true } },
+      // Search by invoice number if provided
+      ...(q ? [{ $match: { 'invoice.number': { $regex: q, $options: 'i' } } }] : []),
+      { $sort: { createdAt: -1 } },
+      {
+        $facet: {
+          data: [
+            { $skip: skip },
+            { $limit: Number(limit) },
+            {
+              $project: {
+                _id: 1,
+                createdAt: 1,
+                status: 1,
+                paymentStatus: 1,
+                pricing: 1,
+                invoice: { _id: '$invoice._id', number: '$invoice.number' }
+              }
+            }
+          ],
+          meta: [ { $count: 'total' } ]
+        }
+      }
+    ]
+
+    const result = await Order.aggregate(pipeline)
+    const data = result[0]?.data || []
+    const total = result[0]?.meta?.[0]?.total || 0
+
+    return res.json({
+      success: true,
+      data: {
+        orders: data,
+        pagination: {
+          currentPage: Number(page),
+          pageSize: Number(limit),
+          totalItems: total,
+          totalPages: Math.max(1, Math.ceil(total / Number(limit)))
+        }
+      }
+    })
   } catch (err) {
     return next(err)
   }

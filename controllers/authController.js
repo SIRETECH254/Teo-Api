@@ -6,7 +6,7 @@ import validator from "validator"
 import crypto from "crypto"
 import { OAuth2Client } from "google-auth-library"
 import { errorHandler } from "../utils/error.js"
-import { sendOTPNotification, sendPasswordResetNotification, sendWelcomeNotification } from "../services/notificationService.js"
+import { sendOTPNotification, sendPasswordResetNotification, sendWelcomeNotification } from "../services/internal/notificationService.js"
 import { assignDefaultRole } from "./userController.js"
 
 
@@ -112,6 +112,9 @@ export const register = async (req, res, next) => {
         })
 
         await user.save()
+
+        // Assign default customer role
+        await assignDefaultRole(user._id)
 
         // Send OTP via email and SMS
         const notificationResult = await sendOTPNotification(email, phone, otp, name)

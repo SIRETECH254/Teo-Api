@@ -31,6 +31,7 @@ import couponRoute from "./routes/couponRoute.js"
 import storeConfigRoute from "./routes/storeConfigRoute.js"
 import packagingRoute from "./routes/packagingRoute.js"
 import statsRoute from "./routes/statsRoute.js"
+import contactRoute from "./routes/contactRoute.js"
 // import orderRoute from "./routes/orderRoute.js"
 // import paymentRoute from "./routes/paymentRoute.js"
 
@@ -40,34 +41,20 @@ const app = express()
 const PORT = process.env.PORT || 5000
 
 
-// CORS Configuration with fallback defaults
-const getAllowedOrigins = () => {
-  // Default fallback origins
-  const defaultOrigins = [
-    'http://localhost:5173',
-    'http://localhost:5174', 
-    'http://localhost:5000',
-    'https://teo-kicks.onrender.com'
-  ]
-  
-  if (!process.env.CORS_ORIGIN) {
-    console.warn('⚠️  CORS_ORIGIN not set in environment variables, using default origins:', defaultOrigins)
-    return defaultOrigins
-  }
-  
-  const origins = process.env.CORS_ORIGIN.split(',').map(origin => origin.trim()).filter(Boolean)
-  
-  if (origins.length === 0) {
-    console.warn('⚠️  CORS_ORIGIN is empty, using default origins:', defaultOrigins)
-    return defaultOrigins
-  }
-  
+// CORS Configuration with explicit origins
+const allowedOrigins = [
+  "http://localhost:5173",
+  "http://localhost:5174",
+  "http://localhost:5175",
+  "https://teo-api.onrender.com",
+  "https://teo-admin.onrender.com",
+  "https://teo-client.onrender.com"
+];
 
-  return origins
+// Add CALLBACK_URL if it exists
+if (process.env.CALLBACK_URL) {
+  allowedOrigins.push(process.env.CALLBACK_URL);
 }
-
-
-const allowedOrigins = getAllowedOrigins()
 
 
 // CORS middleware configuration
@@ -80,7 +67,7 @@ app.use(cors({
       callback(null, true)
     } else {
       console.warn(`🚫 CORS blocked request from origin: ${origin}`)
-      callback(new Error('Not allowed by CORS'))
+      callback(new Error('Not allowed by CORS: Origin not in whitelist'))
     }
   },
   credentials: true,
@@ -139,8 +126,12 @@ app.use("/api/reviews", reviewRoute)
 app.use("/api/coupons", couponRoute)
 
 app.use("/api/store-config", storeConfigRoute)
+
 app.use("/api/packaging", packagingRoute)
+
 app.use("/api/stats", statsRoute)
+
+app.use("/api/contact", contactRoute)
 // app.use("/api/payments", paymentRoute)
 
 
@@ -310,7 +301,7 @@ server.listen(PORT, (err) => {
     console.log(`🚀 TEO KICKS Server running on http://localhost:${PORT}`)
     console.log(`�� API Documentation: http://localhost:${PORT}/api/docs`)
     console.log(`🌍 Environment: ${process.env.NODE_ENV}`)
-    console.log(`🌍 CORS: ${process.env.CORS_ORIGIN}`)
+    console.log(`🌍 CORS: ${allowedOrigins}`)
     console.log(`💰 Currency: KES (Kenyan Shillings)`)
     console.log(`🔌 Socket.io enabled for real-time features`)
     console.log(`📱 Express app is accessible via the HTTP server`)

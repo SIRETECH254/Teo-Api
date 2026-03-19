@@ -1,5 +1,5 @@
 import AfricasTalking from "africastalking"
-import { errorHandler } from "../utils/error.js"
+import { errorHandler } from "../../utils/error.js"
 
 
 // Initialize Africa's Talking only if credentials are available

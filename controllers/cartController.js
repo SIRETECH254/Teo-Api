@@ -10,8 +10,12 @@ export const getCart = async (req, res, next) => {
         
         const cart = await Cart.findOrCreateByUser(userId)
         
-        // Populate product details
+        // Populate product details and userId
         await cart.populate([
+            {
+                path: 'userId',
+                select: 'name email phone'
+            },
             {
                 path: 'items.productId',
                 select: 'title images primaryImage slug skus variants'

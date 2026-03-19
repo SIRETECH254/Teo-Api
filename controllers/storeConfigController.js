@@ -94,30 +94,6 @@ export const updateStoreConfig = async (req, res, next) => {
   }
 }
 
-// @desc    Delete store configuration
-// @route   DELETE /api/store-config
-// @access  Private (Admin only)
-export const deleteStoreConfig = async (req, res, next) => {
-  try {
-    // Find and delete configuration
-    const config = await StoreConfig.findOne()
-
-    if (!config) {
-      return next(errorHandler(404, 'Store configuration not found'))
-    }
-
-    await config.deleteOne()
-
-    res.status(200).json({
-      success: true,
-      message: 'Store configuration deleted successfully'
-    })
-  } catch (error) {
-    console.error('Delete store config error:', error)
-    next(errorHandler(500, 'Failed to delete store configuration'))
-  }
-}
-
 // @desc    Initialize default store configuration (for development/setup)
 // @route   POST /api/store-config/init
 // @access  Private (Admin only)

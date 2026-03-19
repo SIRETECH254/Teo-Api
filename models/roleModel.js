@@ -22,6 +22,11 @@ const roleSchema = new mongoose.Schema({
         default: true
     },
 
+    isSystemRole: {
+        type: Boolean,
+        default: false
+    },
+
     createdBy: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
@@ -48,18 +53,27 @@ roleSchema.statics.createDefaultRoles = async function(adminUserId) {
 
     const defaultRoles = [
         {
+            name: 'admin',
+            description: 'System Administrator with full access',
+            isSystemRole: true,
+            createdBy: adminUserId
+        },
+        {
             name: 'customer',
             description: 'Regular customer with basic shopping permissions',
+            isSystemRole: true,
             createdBy: adminUserId
         },
         {
             name: 'rider',
             description: 'Delivery personnel with order fulfillment permissions',
+            isSystemRole: false,
             createdBy: adminUserId
         },
         {
             name: 'staff',
             description: 'Internal staff with product and order management permissions',
+            isSystemRole: false,
             createdBy: adminUserId
         }
     ]

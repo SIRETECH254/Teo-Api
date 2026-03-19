@@ -2,7 +2,7 @@ import Payment from "../models/paymentModel.js"
 import Invoice from "../models/invoiceModel.js"
 import Order from "../models/orderModel.js"
 import Receipt from "../models/receiptModel.js"
-import { initiateMpesaForInvoice, initiatePaystackForInvoice, createPaymentRecord, applySuccessfulPayment } from "../services/paymentService.js"
+import { initiateMpesaForInvoice, initiatePaystackForInvoice, createPaymentRecord, applySuccessfulPayment } from "../services/internal/paymentService.js"
 import { parseCallback as parseDarajaCallback, queryStkPushStatus } from "../services/external/darajaService.js"
 import { parseWebhook as parsePaystackWebhook } from "../services/external/paystackService.js"
 
@@ -46,6 +46,7 @@ export const getPaymentById = async (req, res, next) => {
   try {
     const { id } = req.params
     const payment = await Payment.findById(id)
+      .populate('invoiceId')
     if (!payment) return res.status(404).json({ success: false, message: 'Payment not found' })
     return res.json({ success: true, data: { payment } })
   } catch (err) {
@@ -321,41 +322,11 @@ export const payInvoice = async (req, res, next) => {
 }
 
 
-// New: Query M-Pesa Express status for a payment (fallback polling)
-export const queryMpesaStatus = async (req, res, next) => {
-  try {
-    const { paymentId } = req.params
-    const { invoiceId } = req.query || {}
-    let payment = await Payment.findById(paymentId)
-    if (!payment && invoiceId) {
-      // Try to locate the latest mpesa payment for this invoice as a fallback
-      payment = await Payment.findOne({ invoiceId, method: 'mpesa_stk' }).sort({ createdAt: -1 })
-    }
-    if (!payment) return res.status(404).json({ success: false, message: 'Payment not found' })
-
-    const checkoutRequestId = payment?.processorRefs?.daraja?.checkoutRequestId
-    if (!checkoutRequestId) {
-      return res.status(400).json({ success: false, message: 'No Daraja reference for this payment' })
-    }
-
-    const result = await queryStkPushStatus({ checkoutRequestId })
-    if (!result.ok) {
-      return res.status(502).json({ success: false, message: result.error, details: result.details })
-    }
-
-    // Map Daraja result codes: 0 = success, others are pending/failure
-    const status = result.resultCode === 0 ? 'SUCCESS' : (payment.status === 'SUCCESS' ? 'SUCCESS' : 'PENDING')
-    return res.json({ success: true, data: { status, resultCode: result.resultCode, resultDesc: result.resultDesc } })
-  } catch (err) {
-    return next(err)
-  }
-}
-
-
 // New: Query M-Pesa Express status by checkoutRequestId (simplified fallback)
 export const queryMpesaByCheckoutId = async (req, res, next) => {
   try {
     const { checkoutRequestId } = req.params
+    const io = req.app.get('io')
 
     if (!checkoutRequestId) {
       return res.status(400).json({ success: false, message: 'checkoutRequestId is required' })
@@ -386,7 +357,7 @@ export const queryMpesaByCheckoutId = async (req, res, next) => {
     if (result.resultCode === 0 && payment.status !== 'SUCCESS') {
       const invoice = await Invoice.findById(payment.invoiceId)
       if (invoice) {
-        await applySuccessfulPayment({ invoice, payment, io: req.app.get('io'), method: 'mpesa_stk' })
+        await applySuccessfulPayment({ invoice, payment, io, method: 'mpesa_stk' })
       }
     } else if (result.resultCode !== 0 && payment.status !== 'FAILED') {
       // If failed, update payment status to FAILED
