@@ -11,27 +11,17 @@ const createTransporter = () => {
 
     }
 
-    // Use explicit SMTP host if provided, otherwise fallback to Gmail service
-    if (process.env.SMTP_HOST) {
-        return nodemailer.createTransport({
-            host: process.env.SMTP_HOST,
-            port: parseInt(process.env.SMTP_PORT || "465"),
-            secure: process.env.SMTP_SECURE === 'true', // true for 465, false for other ports
-            auth: {
-                user: process.env.SMTP_USER,
-                pass: process.env.SMTP_PASS
-            }
-        })
-    }
 
-    // Default to Gmail service if no host is specified
     return nodemailer.createTransport({
-        service: "gmail",
+        host:"smtp.sendgrid.net" ,
+        port: process.env.SMTP_PORT,
+        secure: process.env.SMTP_PORT == 465, // true for 465, false for other ports
         auth: {
             user: process.env.SMTP_USER,
             pass: process.env.SMTP_PASS
         }
     })
+    
 
 }
 
@@ -50,7 +40,7 @@ export const sendOTPEmail = async (email, otp, name = "User") => {
         const transporter = createTransporter()
 
         const mailOptions = {
-            from: `"TEO KICKS" <${process.env.SMTP_USER}>`,
+            from: `"TEO KICKS" <${process.env.SMTP_FROM}>`,
             to: email,
             subject: "Verify Your Account - OTP Code",
             html: `
@@ -115,10 +105,10 @@ export const sendPasswordResetEmail = async (email, resetToken, name = "User") =
 
         const transporter = createTransporter()
 
-        const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`
+        const resetUrl = `${process.env.FRONTEND_URL}/reset-password/${resetToken}`
 
         const mailOptions = {
-            from: `"TEO KICKS" <${process.env.SMTP_USER}>`,
+            from: `"TEO KICKS" <${process.env.SMTP_FROM}>`,
             to: email,
             subject: "Reset Your Password - TEO KICKS",
             html: `
@@ -195,7 +185,7 @@ export const sendWelcomeEmail = async (email, name) => {
         const transporter = createTransporter()
 
         const mailOptions = {
-            from: `"TEO KICKS" <${process.env.SMTP_USER}>`,
+            from: `"TEO KICKS" <${process.env.SMTP_FROM}>`,
             to: email,
             subject: "Welcome to TEO KICKS! 👟",
             html: `
@@ -267,7 +257,7 @@ export const sendContactReplyEmail = async (email, name, originalMessage, replyM
         const transporter = createTransporter()
 
         const mailOptions = {
-            from: `"TEO KICKS Support" <${process.env.SMTP_USER}>`,
+            from: `"TEO KICKS Support" <${process.env.SMTP_FROM}>`,
             to: email,
             subject: "Re: Your Inquiry at TEO KICKS",
             html: `
