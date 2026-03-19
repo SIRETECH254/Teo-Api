@@ -1,47 +1,34 @@
-import nodemailer from "nodemailer"
+import sgMail from "@sendgrid/mail"
 import { errorHandler } from "../../utils/error.js"
 
+// Initialize SendGrid with API Key
+const initializeSendGrid = () => {
 
-// Create email transporter
-const createTransporter = () => {
-
-    if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
-
-        throw errorHandler(500, "Email configuration is missing. Please check SMTP_USER and SMTP_PASS environment variables.")
-
+    if (!process.env.SMTP_PASS) {
+        throw errorHandler(500, "SendGrid API Key is missing. Please check the SMTP_PASS environment variable.")
     }
 
-
-    return nodemailer.createTransport({
-        host:"smtp.sendgrid.net" ,
-        port: process.env.SMTP_PORT,
-        secure: process.env.SMTP_PORT == 465, // true for 465, false for other ports
-        auth: {
-            user: process.env.SMTP_USER,
-            pass: process.env.SMTP_PASS
-        }
-    })
-    
+    sgMail.setApiKey(process.env.SMTP_PASS)
 
 }
-
 
 // Send OTP email
 export const sendOTPEmail = async (email, otp, name = "User") => {
 
     if (!email || !otp) {
-
         throw errorHandler(400, "Email and OTP are required for sending OTP email")
-
     }
 
     try {
 
-        const transporter = createTransporter()
+        initializeSendGrid()
 
-        const mailOptions = {
-            from: `"TEO KICKS" <${process.env.SMTP_FROM}>`,
+        const msg = {
             to: email,
+            from: {
+                name: "TEO KICKS",
+                email: process.env.SMTP_FROM
+            },
             subject: "Verify Your Account - OTP Code",
             html: `
                 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -75,15 +62,15 @@ export const sendOTPEmail = async (email, otp, name = "User") => {
             `
         }
 
-        const result = await transporter.sendMail(mailOptions)
+        const [response] = await sgMail.send(msg)
 
-        console.log(`OTP email sent successfully to ${email}:`, result.messageId)
+        console.log(`OTP email sent successfully to ${email}:`, response.headers['x-message-id'])
 
-        return { success: true, messageId: result.messageId }
+        return { success: true, messageId: response.headers['x-message-id'] }
 
     } catch (error) {
 
-        console.error('Error sending OTP email:', error)
+        console.error('Error sending OTP email:', error.response?.body || error)
 
         throw errorHandler(500, `Failed to send OTP email: ${error.message}`)
 
@@ -91,25 +78,25 @@ export const sendOTPEmail = async (email, otp, name = "User") => {
 
 }
 
-
 // Send password reset email
 export const sendPasswordResetEmail = async (email, resetToken, name = "User") => {
 
     if (!email || !resetToken) {
-
         throw errorHandler(400, "Email and reset token are required for sending password reset email")
-
     }
 
     try {
 
-        const transporter = createTransporter()
+        initializeSendGrid()
 
         const resetUrl = `${process.env.FRONTEND_URL}/reset-password/${resetToken}`
 
-        const mailOptions = {
-            from: `"TEO KICKS" <${process.env.SMTP_FROM}>`,
+        const msg = {
             to: email,
+            from: {
+                name: "TEO KICKS",
+                email: process.env.SMTP_FROM
+            },
             subject: "Reset Your Password - TEO KICKS",
             html: `
                 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -154,15 +141,15 @@ export const sendPasswordResetEmail = async (email, resetToken, name = "User") =
             `
         }
 
-        const result = await transporter.sendMail(mailOptions)
+        const [response] = await sgMail.send(msg)
 
-        console.log(`Password reset email sent successfully to ${email}:`, result.messageId)
+        console.log(`Password reset email sent successfully to ${email}:`, response.headers['x-message-id'])
 
-        return { success: true, messageId: result.messageId }
+        return { success: true, messageId: response.headers['x-message-id'] }
 
     } catch (error) {
 
-        console.error('Error sending password reset email:', error)
+        console.error('Error sending password reset email:', error.response?.body || error)
 
         throw errorHandler(500, `Failed to send password reset email: ${error.message}`)
 
@@ -170,23 +157,23 @@ export const sendPasswordResetEmail = async (email, resetToken, name = "User") =
 
 }
 
-
 // Send welcome email
 export const sendWelcomeEmail = async (email, name) => {
 
     if (!email || !name) {
-
         throw errorHandler(400, "Email and name are required for sending welcome email")
-
     }
 
     try {
 
-        const transporter = createTransporter()
+        initializeSendGrid()
 
-        const mailOptions = {
-            from: `"TEO KICKS" <${process.env.SMTP_FROM}>`,
+        const msg = {
             to: email,
+            from: {
+                name: "TEO KICKS",
+                email: process.env.SMTP_FROM
+            },
             subject: "Welcome to TEO KICKS! 👟",
             html: `
                 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -226,15 +213,15 @@ export const sendWelcomeEmail = async (email, name) => {
             `
         }
 
-        const result = await transporter.sendMail(mailOptions)
+        const [response] = await sgMail.send(msg)
 
-        console.log(`Welcome email sent successfully to ${email}:`, result.messageId)
+        console.log(`Welcome email sent successfully to ${email}:`, response.headers['x-message-id'])
 
-        return { success: true, messageId: result.messageId }
+        return { success: true, messageId: response.headers['x-message-id'] }
 
     } catch (error) {
 
-        console.error('Error sending welcome email:', error)
+        console.error('Error sending welcome email:', error.response?.body || error)
 
         throw errorHandler(500, `Failed to send welcome email: ${error.message}`)
 
@@ -242,23 +229,23 @@ export const sendWelcomeEmail = async (email, name) => {
 
 }
 
-
 // Send contact reply email
 export const sendContactReplyEmail = async (email, name, originalMessage, replyMessage) => {
 
     if (!email || !replyMessage) {
-
         throw errorHandler(400, "Email and reply message are required")
-
     }
 
     try {
 
-        const transporter = createTransporter()
+        initializeSendGrid()
 
-        const mailOptions = {
-            from: `"TEO KICKS Support" <${process.env.SMTP_FROM}>`,
+        const msg = {
             to: email,
+            from: {
+                name: "TEO KICKS Support",
+                email: process.env.SMTP_FROM
+            },
             subject: "Re: Your Inquiry at TEO KICKS",
             html: `
                 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -291,15 +278,15 @@ export const sendContactReplyEmail = async (email, name, originalMessage, replyM
             `
         }
 
-        const result = await transporter.sendMail(mailOptions)
+        const [response] = await sgMail.send(msg)
 
-        console.log(`Contact reply email sent successfully to ${email}:`, result.messageId)
+        console.log(`Contact reply email sent successfully to ${email}:`, response.headers['x-message-id'])
 
-        return { success: true, messageId: result.messageId }
+        return { success: true, messageId: response.headers['x-message-id'] }
 
     } catch (error) {
 
-        console.error('Error sending contact reply email:', error)
+        console.error('Error sending contact reply email:', error.response?.body || error)
 
         throw errorHandler(500, `Failed to send contact reply email: ${error.message}`)
 
