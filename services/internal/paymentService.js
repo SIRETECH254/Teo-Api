@@ -179,9 +179,9 @@ export const applySuccessfulPayment = async ({ invoice, payment, io, method }) =
 }
 
 
-export const initiateMpesaForInvoice = async ({ invoice, payment, amount, phone, callbackUrl }) => {
+export const initiateMpesaForInvoice = async ({ invoice, payment, amount, phone}) => {
   const accountReference = invoice.number || invoice._id
-  const res = await initiateStkPush({ amount, phone, accountReference, callbackUrl })
+  const res = await initiateStkPush({ amount, phone, accountReference })
   payment.status = 'PENDING'
   // Update only the daraja nested subdocument to avoid assigning undefined to paystack
   if (!payment.processorRefs) payment.processorRefs = {}

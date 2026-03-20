@@ -202,8 +202,7 @@ export const payInvoice = async (req, res, next) => {
       method, // 'mpesa_stk' | 'paystack_card' | 'cash' | 'post_to_bill' | 'cod'
       amount: clientAmount,
       payerPhone, // required for mpesa_stk (format 2547XXXXXXXX)
-      payerEmail, // required for paystack_card
-      callbackUrl // optional override
+      payerEmail // required for paystack_card
     } = req.body || {}
 
     if (!invoiceId || !method) {
@@ -283,16 +282,12 @@ export const payInvoice = async (req, res, next) => {
         return res.status(400).json({ success: false, message: 'Invalid Kenyan phone format. Use 2547XXXXXXXX' })
       }
 
-      // Ensure absolute callback URL (prefer env, fallback to request host)
-      const baseUrl = process.env.API_BASE_URL || `${req.protocol}://${req.get('host')}`
-      const callback = callbackUrl || `${baseUrl}/api/payments/webhooks/mpesa`
 
       const { merchantRequestId, checkoutRequestId } = await initiateMpesaForInvoice({
         invoice,
         payment,
         amount,
-        phone: msisdn,
-        callbackUrl: callback
+        phone: msisdn
       })
 
       io?.emit('payment.updated', { paymentId: payment._id.toString(), status: payment.status })
