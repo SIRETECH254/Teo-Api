@@ -410,8 +410,179 @@ export const createOrder = async (req, res, next) => {
 
 **Controller Implementation:**
 ```javascript
+/**
+ * Admin: Create order for a specific customer with manual item selection (bypassing cart)
+ */
 export const adminCreateOrder = async (req, res, next) => {
-  // ... implementation in controllers/orderController.js
+  try {
+    const io = req.app.get('io')
+
+    const {
+      customerId, // Required: The customer for whom the order is created
+      items: inputItems, // Required: Array of { productId, skuId, quantity }
+      location,
+      type,
+      timing = { isScheduled: false, scheduledAt: null },
+      addressId = null,
+      paymentPreference,
+      packagingOptionId = null,
+      couponCode = null,
+      metadata = {}
+    } = req.body || {}
+
+    if (!customerId) {
+      return res.status(400).json({ success: false, message: 'customerId is required' })
+    }
+
+    if (!inputItems || !Array.isArray(inputItems) || inputItems.length === 0) {
+      return res.status(400).json({ success: false, message: 'Items are required' })
+    }
+
+    const actingUserId = req.user?._id || req.user?.id
+
+    // 1. Resolve Item Details (Titles, Variants, Prices) from Products/SKUs
+    const productIds = Array.from(new Set(inputItems.map(it => String(it.productId))))
+    const products = await Product.find({ _id: { $in: productIds } })
+    const productMap = new Map(products.map(p => [String(p._id), p]))
+
+    const items = []
+    for (const inputItem of inputItems) {
+      const product = productMap.get(String(inputItem.productId))
+      if (!product) {
+        return res.status(404).json({ success: false, message: `Product ${inputItem.productId} not found` })
+      }
+
+      const sku = product.skus.id(inputItem.skuId)
+      if (!sku) {
+        return res.status(404).json({ success: false, message: `SKU ${inputItem.skuId} not found in product ${product.title}` })
+      }
+
+      // Check stock (Informational for admin, but we still validate)
+      if (sku.stock < inputItem.quantity) {
+        return res.status(400).json({ success: false, message: `Insufficient stock for ${product.title}. Available: ${sku.stock}` })
+      }
+
+      // Resolve variant options display (Helper would be better, but let's derive)
+      // Note: Product model has attributes in SKUs
+      const variantOptions = {}
+      // If we need to populate names, we'd need more lookups, but let's keep it consistent with orderModel
+      
+      items.push({
+        skuId: sku._id,
+        productId: product._id,
+        title: product.title,
+        variantOptions: sku.variantOptions || {}, // Assuming SKU might have a flattened snapshot
+        quantity: inputItem.quantity,
+        unitPrice: sku.price,
+        packagingChoice: undefined 
+      })
+    }
+
+    // 2. Resolve packaging
+    let selectedPackaging = null
+    if (packagingOptionId) {
+      const opt = await PackagingOption.findOne({ _id: packagingOptionId, isActive: true })
+      if (opt) selectedPackaging = { id: String(opt._id), name: opt.name, price: opt.price }
+    }
+    if (!selectedPackaging) {
+      const def = await PackagingOption.findOne({ isActive: true, isDefault: true })
+      if (def) selectedPackaging = { id: String(def._id), name: def.name, price: def.price }
+    }
+
+    // 3. Pricing Calculation
+    const subtotal = items.reduce((sum, it) => sum + (it.unitPrice * it.quantity), 0)
+    const packagingFee = selectedPackaging ? Number(selectedPackaging.price || 0) : 0
+    const schedulingFee = timing?.isScheduled ? 0 : 0 
+    const deliveryFee = (type === 'delivery') ? 0 : 0 
+
+    // 4. Coupon logic
+    let couponSnapshot = null
+    let discounts = 0
+    if (couponCode) {
+      const coupon = await Coupon.findOne({ code: String(couponCode).toUpperCase() })
+      if (coupon) {
+        const validation = coupon.validateCoupon(String(customerId), subtotal)
+        if (validation.isValid) {
+          const discountAmount = coupon.calculateDiscount(subtotal)
+          discounts = Math.max(0, Number(discountAmount) || 0)
+          couponSnapshot = {
+            _id: coupon._id,
+            code: coupon.code,
+            name: coupon.name,
+            discountType: coupon.discountType,
+            discountValue: coupon.discountValue,
+            discountAmount: discounts
+          }
+        }
+      }
+    }
+
+    const tax = 0
+    const total = subtotal - discounts + packagingFee + schedulingFee + deliveryFee + tax
+
+    // 5. Create Order
+    const order = await Order.create({
+      customerId,
+      createdBy: actingUserId,
+      location,
+      type,
+      items,
+      pricing: { subtotal, discounts, packagingFee, schedulingFee, deliveryFee, tax, total },
+      timing,
+      addressId: type === 'delivery' ? addressId : null,
+      paymentPreference,
+      status: 'PLACED', // Matches regular controller
+      paymentStatus: paymentPreference?.mode === 'pay_now' ? 'PENDING' : 'UNPAID', // Matches regular controller
+      metadata: {
+        ...metadata,
+        adminCreated: true,
+        packaging: selectedPackaging || null,
+        coupon: couponSnapshot || null
+      }
+    })
+
+    // 6. Create Invoice
+    const invoice = await Invoice.create({
+      orderId: order._id,
+      number: generateInvoiceNumber(),
+      lineItems: [
+        { label: 'Items subtotal', amount: subtotal },
+        ...(packagingFee ? [{ label: `Packaging${selectedPackaging?.name ? ` - ${selectedPackaging.name}` : ''}`, amount: packagingFee }] : []),
+        ...(schedulingFee ? [{ label: 'Scheduling', amount: schedulingFee }] : []),
+        ...(deliveryFee ? [{ label: 'Delivery', amount: deliveryFee }] : []),
+        ...(tax ? [{ label: 'Tax', amount: tax }] : [])
+      ],
+      subtotal,
+      discounts,
+      fees: packagingFee + schedulingFee + deliveryFee,
+      tax,
+      total,
+      balanceDue: total,
+      paymentStatus: 'PENDING',
+      metadata: {
+        coupon: couponSnapshot || null
+      }
+    })
+
+    order.invoiceId = invoice._id
+    await order.save()
+
+    // Increment coupon usage
+    if (couponSnapshot) {
+      try {
+        const c = await Coupon.findById(couponSnapshot._id)
+        if (c) await c.incrementUsage(String(customerId))
+      } catch (_) {}
+    }
+
+    // Emit events
+    io?.emit('order.created', { orderId: order._id.toString() })
+    io?.emit('invoice.created', { invoiceId: invoice._id.toString(), orderId: order._id.toString() })
+
+    return res.status(201).json({ success: true, data: { orderId: order._id, invoiceId: invoice._id } })
+  } catch (err) {
+    return next(err)
+  }
 }
 ```
 
@@ -771,8 +942,9 @@ export default router
       "invoiceId": "65e26b1c09b068c201383821"
     }
   }
+```
 
-  #### `POST /api/orders/admin/create`
+#### `POST /api/orders/admin/create`
   **Headers:** `Authorization: Bearer <token>`  
   **Body (JSON):**  
   ```json
@@ -1100,6 +1272,7 @@ curl -X PATCH http://localhost:5000/api/orders/<order_id>/status
 -   **Socket.io Events:** Real-time updates on order status changes are emitted securely via Socket.io to relevant parties.
 
 ---
+
 
 ## 🚨 Error Handling
 
