@@ -401,6 +401,20 @@ export const createOrder = async (req, res, next) => {
 }
 ```
 
+#### `adminCreateOrder()`
+**Purpose:** Allows admins to create an order for a specific customer by manually selecting items, bypassing the cart. It resolves item details from current product/SKU data, calculates pricing (including packaging and coupons), and initiates an associated invoice.  
+**Access:** Private (Admin)  
+**Validation:** `customerId`, `items` (array of `{ productId, skuId, quantity }`), `location`, `type`, and `paymentPreference` are required. Checks for customer existence, product availability, valid packaging, and coupon.  
+**Process:** Fetches relevant details for manual items, calculates pricing, creates `Order` and `Invoice` documents, updates coupon usage, and emits events.  
+**Response:** The ID of the newly created order and its associated invoice.
+
+**Controller Implementation:**
+```javascript
+export const adminCreateOrder = async (req, res, next) => {
+  // ... implementation in controllers/orderController.js
+}
+```
+
 #### `getOrderById()`
 **Purpose:** Retrieves a single order by its ID, with populated details such as invoice, receipt, address, customer, createdBy, and product item data.  
 **Access:** Private (Authenticated User / Admin)  
@@ -692,13 +706,23 @@ export const deleteOrder = async (req, res, next) => {
 ```javascript
 import express from "express"
 import { authenticateToken, requireAdmin } from "../middlewares/auth.js"
-import { createOrder, getOrderById, updateOrderStatus, assignRider, getOrders, deleteOrder, getUserOrders } from "../controllers/orderController.js"
+import {
+  createOrder,
+  adminCreateOrder,
+  getOrderById,
+  updateOrderStatus,
+  assignRider,
+  getOrders,
+  deleteOrder,
+  getUserOrders
+} from "../controllers/orderController.js"
 
 
 const router = express.Router()
 
 
 router.post('/', authenticateToken, createOrder)
+router.post('/admin/create', authenticateToken, requireAdmin, adminCreateOrder)
 router.get('/', authenticateToken, requireAdmin, getOrders)
 router.get('/my-orders', authenticateToken, getUserOrders)
 router.get('/:id', authenticateToken, getOrderById)
@@ -740,13 +764,54 @@ export default router
 **Response:** `201 Created` with the ID of the newly created order and its associated invoice.
 ```json
 {
-  "success": true,
-  "data": {
-    "orderId": "65e26b1c09b068c201383820",
-    "invoiceId": "65e26b1c09b068c201383821"
+  {
+    "success": true,
+    "data": {
+      "orderId": "65e26b1c09b068c201383820",
+      "invoiceId": "65e26b1c09b068c201383821"
+    }
   }
-}
-```
+
+  #### `POST /api/orders/admin/create`
+  **Headers:** `Authorization: Bearer <token>`  
+  **Body (JSON):**  
+  ```json
+  {
+    "customerId": "65e26b1c09b068c201383812", // Required: Customer ID for the order
+    "items": [                                // Required: Array of items
+      {
+        "productId": "65e26b1c09b068c201383814",
+        "skuId": "65e26b1c09b068c201383813",
+        "quantity": 2
+      }
+    ],
+    "location": "in_shop",                   // "in_shop" or "away"
+    "type": "pickup",                        // "pickup" or "delivery"
+    "timing": {
+      "isScheduled": false,
+      "scheduledAt": null
+    },
+    "addressId": null,                       // Required if type is "delivery"
+    "paymentPreference": {
+      "mode": "cash"                         // "post_to_bill", "pay_now", "cash", "cod"
+    },
+    "packagingOptionId": "65e26b1c09b068c201383815", // Optional
+    "couponCode": "SUMMER25",                // Optional
+    "metadata": {}                           // Optional
+  }
+  ```
+  **Purpose:** Create a new order for a specified customer by manually selecting items, bypassing the cart.  
+  **Access:** Private (Admin)  
+  **Response:** `201 Created` with the ID of the newly created order and its associated invoice.
+  ```json
+  {
+    "success": true,
+    "data": {
+      "orderId": "65e26b1c09b068c201383820",
+      "invoiceId": "65e26b1c09b068c201383821"
+    }
+  }
+  ```
 
 #### `GET /api/orders`
 **Headers:** `Authorization: Bearer <token>`  
@@ -978,6 +1043,28 @@ curl -X POST http://localhost:5000/api/orders
     "packagingOptionId": "65e26b1c09b068c201383815",
     "couponCode": "SUMMER25",
     "cartId": "65e26b1c09b068c201383814"
+  }'
+```
+
+### Create a New Order (Admin, manual selection)
+```bash
+curl -X POST http://localhost:5000/api/orders/admin/create \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <admin_access_token>" \
+  -d '{
+    "customerId": "65e26b1c09b068c201383812",
+    "items": [
+      {
+        "productId": "65e26b1c09b068c201383814",
+        "skuId": "65e26b1c09b068c201383813",
+        "quantity": 2
+      }
+    ],
+    "location": "in_shop",
+    "type": "pickup",
+    "paymentPreference": {
+      "mode": "cash"
+    }
   }'
 ```
 

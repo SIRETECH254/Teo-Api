@@ -1,12 +1,22 @@
 import express from "express"
 import { authenticateToken, requireAdmin } from "../middlewares/auth.js"
-import { createOrder, getOrderById, updateOrderStatus, assignRider, getOrders, deleteOrder, getUserOrders } from "../controllers/orderController.js"
+import {
+  createOrder,
+  adminCreateOrder,
+  getOrderById,
+  updateOrderStatus,
+  assignRider,
+  getOrders,
+  deleteOrder,
+  getUserOrders
+} from "../controllers/orderController.js"
 
 
 const router = express.Router()
 
 
 router.post('/', authenticateToken, createOrder)
+router.post('/admin/create', authenticateToken, requireAdmin, adminCreateOrder)
 router.get('/', authenticateToken, requireAdmin, getOrders)
 router.get('/my-orders', authenticateToken, getUserOrders)
 router.get('/:id', authenticateToken, getOrderById)
