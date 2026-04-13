@@ -50,6 +50,7 @@ router.post("/", createVariant)
 
 router.put("/:id", updateVariant)
 
+router.delete("/:id", deleteVariant)
 
 router.post("/:id/options", addOption)
 

@@ -331,51 +331,71 @@ export const updateVariant = async (req, res) => {
 
 
 
-// Delete variant
+// @desc    Delete variant
+// @route   DELETE /api/variants/:id
+// @access  Private (Admin/Manager)
 export const deleteVariant = async (req, res) => {
-
     try {
-
         const { id } = req.params
 
-        const variant = await Variant.findByIdAndDelete(id)
+        const variant = await Variant.findById(id)
 
         if (!variant) {
-
             return res.status(404).json({
-
                 success: false,
-
                 message: "Variant not found"
-
             })
-
         }
 
+        // Perform cascade deletion in products
+        const { default: Product } = await import('../models/productModel.js')
+
+        // 1. Find products that use this variant
+        const productsToUpdate = await Product.find({ 
+            $or: [
+                { variants: id },
+                { 'selectedVariantOptions.variantId': id },
+                { 'skus.attributes.variantId': id }
+            ]
+        })
+
+        for (const product of productsToUpdate) {
+            // Remove from variants array
+            product.variants = product.variants.filter(vId => vId.toString() !== id.toString())
+
+            // Remove from selectedVariantOptions
+            product.selectedVariantOptions = product.selectedVariantOptions.filter(
+                sel => sel.variantId.toString() !== id.toString()
+            )
+
+            // Remove SKUs that use this variant
+            product.skus = product.skus.filter(sku => 
+                !sku.attributes.some(attr => attr.variantId.toString() === id.toString())
+            )
+
+            // If no SKUs left or no variants left, it might need regeneration or default SKU
+            if (product.skus.length === 0) {
+                await product.generateSKUs()
+            } else {
+                await product.save()
+            }
+        }
+
+        // 2. Delete the variant itself
+        await Variant.findByIdAndDelete(id)
+
         res.json({
-
             success: true,
-
-            message: "Variant deleted successfully"
-
+            message: "Variant and all related product references/SKUs deleted successfully"
         })
-
     } catch (error) {
-
         console.error("Delete variant error:", error)
-
         res.status(500).json({
-
             success: false,
-
             message: "Internal server error",
-
             error: error.message
-
         })
-
     }
-
 }
 
 
