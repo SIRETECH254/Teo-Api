@@ -78,84 +78,10 @@ const router = express.Router()
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-// Public routes
-router.post('/validate', validateCoupon)
-
 // Protected routes (require authentication)
 router.use(authenticateToken)
 
-/**
- * @swagger
- * /api/coupons/apply:
- *   post:
- *     summary: Apply coupon to order
- *     tags: [Coupons]
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - code
- *               - orderAmount
- *             properties:
- *               code:
- *                 type: string
- *                 description: Coupon code to apply
- *                 example: "SAVE20"
- *               orderAmount:
- *                 type: number
- *                 description: Order amount to apply coupon to
- *                 example: 1000
- *     responses:
- *       200:
- *         description: Coupon applied successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 message:
- *                   type: string
- *                   example: "Coupon applied successfully"
- *                 data:
- *                   type: object
- *                   properties:
- *                     coupon:
- *                       $ref: '#/components/schemas/Coupon'
- *                     discountAmount:
- *                       type: number
- *                       description: Applied discount amount
- *                       example: 200
- *                     finalAmount:
- *                       type: number
- *                       description: Final amount after discount
- *                       example: 800
- *       400:
- *         description: Invalid coupon or conditions not met
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
- *       401:
- *         description: Unauthorized
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
- *       404:
- *         description: Coupon not found
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
- */
+router.post('/validate', validateCoupon)
 router.post('/apply', applyCoupon)
 
 // Admin routes (require admin role)

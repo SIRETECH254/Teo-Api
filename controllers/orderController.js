@@ -150,16 +150,6 @@ export const createOrder = async (req, res, next) => {
     order.invoiceId = invoice._id
     await order.save()
 
-    // Mark coupon as used (increment usage) on order creation if applied
-    if (couponSnapshot) {
-      try {
-        const c = await Coupon.findById(couponSnapshot._id)
-        if (c) await c.incrementUsage(String(ownerCustomerId))
-      } catch (_) {
-        // Do not block order on coupon usage write
-      }
-    }
-
     // Optionally mark cart converted
     if (cart) {
       cart.status = 'converted'
@@ -333,14 +323,6 @@ export const adminCreateOrder = async (req, res, next) => {
 
     order.invoiceId = invoice._id
     await order.save()
-
-    // Increment coupon usage
-    if (couponSnapshot) {
-      try {
-        const c = await Coupon.findById(couponSnapshot._id)
-        if (c) await c.incrementUsage(String(customerId))
-      } catch (_) {}
-    }
 
     // Emit events
     io?.emit('order.created', { orderId: order._id.toString() })

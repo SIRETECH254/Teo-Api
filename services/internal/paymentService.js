@@ -3,6 +3,7 @@ import Invoice from "../../models/invoiceModel.js"
 import Order from "../../models/orderModel.js"
 import Receipt from "../../models/receiptModel.js"
 import Product from "../../models/productModel.js"
+import Coupon from "../../models/couponModel.js"
 import { initiateStkPush } from "../external/darajaService.js"
 import { initTransaction } from "../external/paystackService.js"
 
@@ -146,6 +147,20 @@ export const applySuccessfulPayment = async ({ invoice, payment, io, method }) =
 
   order.paymentStatus = 'PAID'
   await order.save()
+
+  // Increment coupon usage if applied
+  const couponSnapshot = invoice.metadata?.coupon
+  if (couponSnapshot) {
+    try {
+      const c = await Coupon.findById(couponSnapshot._id)
+      if (c) {
+        // Use customerId from order for usage tracking
+        await c.incrementUsage(String(order.customerId))
+      }
+    } catch (couponError) {
+      console.error('Failed to increment coupon usage after payment:', couponError)
+    }
+  }
 
   // Update SKU inventory - reduce stock for each order item
   try {

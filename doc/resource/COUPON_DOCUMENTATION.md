@@ -924,9 +924,28 @@ export default router
   "code": "SUMMER25"
 }
 ```
+**Response (JSON):**
+```json
+{
+  "success": true,
+  "message": "Coupon is valid",
+  "data": {
+    "coupon": {
+      "_id": "64f1a2b3c4d5e6f7a8b9c0d1",
+      "code": "SUMMER25",
+      "name": "Summer Sale",
+      "discountType": "percentage",
+      "discountValue": 25,
+      "minimumOrderAmount": 1000
+    },
+    "discountAmount": 250,
+    "orderAmount": 1000,
+    "finalAmount": 750
+  }
+}
+```
 **Purpose:** Validate a coupon code against minimum order amount, expiry, and usage rules without applying it.  
 **Access:** Public  
-**Response:** `200 OK` with validation results and potential discount amount.
 
 #### `POST /api/coupons/apply`
 **Headers:** `Authorization: Bearer <access_token>`  
@@ -937,9 +956,27 @@ export default router
   "orderAmount": 1500
 }
 ```
+**Response (JSON):**
+```json
+{
+  "success": true,
+  "message": "Coupon applied successfully",
+  "data": {
+    "coupon": {
+      "_id": "64f1a2b3c4d5e6f7a8b9c0d1",
+      "code": "SUMMER25",
+      "name": "Summer Sale",
+      "discountType": "percentage",
+      "discountValue": 25
+    },
+    "discountAmount": 375,
+    "orderAmount": 1500,
+    "finalAmount": 1125
+  }
+}
+```
 **Purpose:** Apply a coupon to an order by validating it and calculating the discount.  
 **Access:** Private (Authenticated User)  
-**Response:** `200 OK` with applied coupon details and discount amount.
 
 #### `POST /api/coupons`
 **Headers:** `Authorization: Bearer <admin_access_token>`  
@@ -958,29 +995,96 @@ export default router
   "usageLimit": 100
 }
 ```
+**Response (JSON):**
+```json
+{
+  "success": true,
+  "message": "Coupon created successfully",
+  "data": {
+    "_id": "64f1a2b3c4d5e6f7a8b9c0d2",
+    "code": "X7R2B9K4",
+    "name": "New Customer Discount",
+    "discountType": "percentage",
+    "discountValue": 25,
+    "isActive": true
+  }
+}
+```
 **Purpose:** Create a new coupon in the system.  
 **Access:** Private (Admin Only)  
-**Response:** `201 Created` with the details of the newly created coupon.
 
 #### `GET /api/coupons`
 **Headers:** `Authorization: Bearer <admin_access_token>`  
 **Query Parameters:** `page`, `limit`, `sort`, `search`, `status`  
+**Response (JSON):**
+```json
+{
+  "success": true,
+  "data": {
+    "coupons": [
+      {
+        "_id": "64f1a2b3c4d5e6f7a8b9c0d1",
+        "code": "SUMMER25",
+        "name": "Summer Sale",
+        "isActive": true
+      }
+    ],
+    "pagination": {
+      "currentPage": 1,
+      "totalPages": 5,
+      "totalCoupons": 50,
+      "hasNextPage": true,
+      "hasPrevPage": false
+    }
+  }
+}
+```
 **Purpose:** Retrieve a paginated list of all coupons, with filtering and sorting options.  
 **Access:** Private (Admin Only)  
-**Response:** `200 OK` with paginated coupon data.
 
 #### `GET /api/coupons/stats`
 **Headers:** `Authorization: Bearer <admin_access_token>`  
+**Response (JSON):**
+```json
+{
+  "success": true,
+  "data": {
+    "totalCoupons": 50,
+    "activeCoupons": 45,
+    "expiredCoupons": 2,
+    "usedCoupons": 30,
+    "topUsedCoupons": [
+      {
+        "code": "WELCOME10",
+        "usedCount": 150
+      }
+    ]
+  }
+}
+```
 **Purpose:** Retrieve overall statistics about coupons.  
 **Access:** Private (Admin Only)  
-**Response:** `200 OK` with coupon statistics.
 
 #### `GET /api/coupons/:couponId`
 **Headers:** `Authorization: Bearer <admin_access_token>`  
 **Parameters:** `couponId` (path) - The ID of the coupon to retrieve.  
+**Response (JSON):**
+```json
+{
+  "success": true,
+  "data": {
+    "_id": "64f1a2b3c4d5e6f7a8b9c0d1",
+    "code": "SUMMER25",
+    "name": "Summer Sale",
+    "discountType": "percentage",
+    "discountValue": 25,
+    "isActive": true,
+    "usedCount": 45
+  }
+}
+```
 **Purpose:** Retrieve a single coupon by its unique identifier.  
 **Access:** Private (Admin Only)  
-**Response:** `200 OK` with the coupon object, or `404 Not Found`.
 
 #### `PUT /api/coupons/:couponId`
 **Headers:** `Authorization: Bearer <admin_access_token>`  
@@ -993,23 +1097,50 @@ export default router
   "usageLimit": 50
 }
 ```
+**Response (JSON):**
+```json
+{
+  "success": true,
+  "message": "Coupon updated successfully",
+  "data": {
+    "_id": "64f1a2b3c4d5e6f7a8b9c0d1",
+    "code": "SUMMER25",
+    "isActive": false,
+    "usageLimit": 50
+  }
+}
+```
 **Purpose:** Update the details of an existing coupon.  
 **Access:** Private (Admin Only)  
-**Response:** `200 OK` with the updated coupon object.
 
 #### `DELETE /api/coupons/:couponId`
 **Headers:** `Authorization: Bearer <admin_access_token>`  
 **Parameters:** `couponId` (path) - The ID of the coupon to delete.  
+**Response (JSON):**
+```json
+{
+  "success": true,
+  "message": "Coupon deleted successfully"
+}
+```
 **Purpose:** Delete a coupon from the system.  
 **Access:** Private (Admin Only). Fails if coupon has been used.  
-**Response:** `200 OK` with a success message.
 
 #### `PATCH /api/coupons/:couponId/generate-code`
 **Headers:** `Authorization: Bearer <admin_access_token>`  
 **Parameters:** `couponId` (path) - The ID of the coupon to generate a new code for.  
+**Response (JSON):**
+```json
+{
+  "success": true,
+  "message": "New coupon code generated successfully",
+  "data": {
+    "code": "N3WCOD3"
+  }
+}
+```
 **Purpose:** Generate a new unique code for an existing coupon. Fails if coupon has been used.  
 **Access:** Private (Admin Only)  
-**Response:** `200 OK` with the updated coupon object showing the new code.
 
 ---
 
